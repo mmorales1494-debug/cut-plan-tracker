@@ -183,7 +183,25 @@ function workoutCompletionPct(day) {
   return 0;
 }
 
-function renderMealCard(day, mealName, title) {
+const MEAL_ORDER = Object.keys(MEAL_TEMPLATES);
+const MEAL_TITLES = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", extra: "Extra / swaps" };
+const MEAL_TAB_LABELS = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", extra: "Extra" };
+let mealTabIndex = 0;
+
+function renderMealSwipeCard(day) {
+  const mealName = MEAL_ORDER[mealTabIndex];
+  return `
+    <div class="card">
+      <div class="toggle-pill">
+        ${MEAL_ORDER.map((m, i) => `<button data-action="setMealTab" data-idx="${i}" class="${i === mealTabIndex ? "active" : ""}">${MEAL_TAB_LABELS[m]}</button>`).join("")}
+      </div>
+      <div class="meal-swipe-area" data-swipe="meal" style="margin-top:12px;">
+        ${renderMealInner(day, mealName, MEAL_TITLES[mealName])}
+      </div>
+    </div>`;
+}
+
+function renderMealInner(day, mealName, title) {
   const meal = day.meals[mealName];
   const template = MEAL_TEMPLATES[mealName] || {};
   const totals = mealTotals(meal);
@@ -210,16 +228,14 @@ function renderMealCard(day, mealName, title) {
   const hasTemplate = Object.keys(template).length > 0;
 
   return `
-    <div class="card">
-      <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g</span></div>
-      ${rows}
-      <div class="add-item-row" style="display:flex; gap:8px;">
-        <select data-action="mealAdd" data-meal="${mealName}" style="flex:1;">
-          <option value="">+ add item…</option>
-          ${options}
-        </select>
-        ${hasTemplate ? `<button class="btn secondary" data-action="mealLogPlanned" data-meal="${mealName}">Log as planned</button>` : ""}
-      </div>
+    <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g</span></div>
+    ${rows}
+    <div class="add-item-row" style="display:flex; gap:8px;">
+      <select data-action="mealAdd" data-meal="${mealName}" style="flex:1;">
+        <option value="">+ add item…</option>
+        ${options}
+      </select>
+      ${hasTemplate ? `<button class="btn secondary" data-action="mealLogPlanned" data-meal="${mealName}">Log as planned</button>` : ""}
     </div>`;
 }
 
@@ -293,10 +309,7 @@ function renderToday(day) {
       `).join("")}
     </div>
 
-    ${renderMealCard(day, "breakfast", "Breakfast")}
-    ${renderMealCard(day, "lunch", "Lunch")}
-    ${renderMealCard(day, "dinner", "Dinner")}
-    ${renderMealCard(day, "extra", "Extra / swaps")}
+    ${renderMealSwipeCard(day)}
 
     <div class="card">
       <h2>Water</h2>
@@ -748,10 +761,16 @@ document.getElementById("view-root").addEventListener("click", e => {
 
   if (action === "navDay") {
     viewDate = addDays(viewDate, Number(el.dataset.delta));
+    mealTabIndex = 0;
     render(); return;
   }
   if (action === "jumpToday") {
     viewDate = formatDateKey(new Date());
+    mealTabIndex = 0;
+    render(); return;
+  }
+  if (action === "setMealTab") {
+    mealTabIndex = Number(el.dataset.idx);
     render(); return;
   }
   if (action === "closeDay") {
@@ -901,6 +920,28 @@ document.getElementById("view-root").addEventListener("keydown", e => {
     e.preventDefault();
     addTodoFromInput();
   }
+});
+
+// ---------- meal card swipe ----------
+
+let swipeStartX = null;
+let swipeStartY = null;
+
+document.getElementById("view-root").addEventListener("touchstart", e => {
+  if (!e.target.closest('[data-swipe="meal"]')) return;
+  swipeStartX = e.touches[0].clientX;
+  swipeStartY = e.touches[0].clientY;
+}, { passive: true });
+
+document.getElementById("view-root").addEventListener("touchend", e => {
+  if (swipeStartX === null || !e.target.closest('[data-swipe="meal"]')) return;
+  const dx = e.changedTouches[0].clientX - swipeStartX;
+  const dy = e.changedTouches[0].clientY - swipeStartY;
+  swipeStartX = null;
+  if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy)) return; // ignore short/vertical swipes
+  if (dx < 0) mealTabIndex = Math.min(MEAL_ORDER.length - 1, mealTabIndex + 1);
+  else mealTabIndex = Math.max(0, mealTabIndex - 1);
+  render();
 });
 
 function addTodoFromInput() {
