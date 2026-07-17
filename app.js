@@ -1025,6 +1025,14 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
+  // When a newer service worker takes over (i.e. an update was pushed), reload once
+  // so the already-open page picks up the fresh files instead of staying stale.
+  let swRefreshed = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swRefreshed) return;
+    swRefreshed = true;
+    location.reload();
+  });
 }
 
 // ---------- init ----------

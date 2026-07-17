@@ -1,4 +1,4 @@
-const CACHE_NAME = "cut-plan-shell-v1";
+const CACHE_NAME = "cut-plan-shell-v2";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -25,16 +25,16 @@ self.addEventListener("activate", event => {
   );
 });
 
+// Network-first: always try to fetch the latest version when online, so pushed
+// updates show up on next load instead of being stuck on whatever was cached first.
+// Falls back to the cache only when offline.
 self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(res => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-        return res;
-      }).catch(() => cached);
-    })
+    fetch(event.request).then(res => {
+      const copy = res.clone();
+      caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+      return res;
+    }).catch(() => caches.match(event.request))
   );
 });
