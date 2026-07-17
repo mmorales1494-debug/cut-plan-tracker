@@ -16,6 +16,7 @@ function loadState() {
     try {
       const parsed = JSON.parse(raw);
       if (!parsed.todos) parsed.todos = [];
+      if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       return parsed;
     } catch (e) { /* fall through to fresh state */ }
   }
@@ -25,6 +26,7 @@ function loadState() {
     days: {},
     checkIns: [],
     todos: [],
+    checklistItems: SUPPLEMENTS.map(s => ({ ...s })),
   };
 }
 
@@ -81,7 +83,7 @@ function getOrCreateDay(dateKey) {
       scheduledActivity: scheduled,
       meals: emptyMealsFromTemplate(),
       water: { quarterBottles: 0 },
-      supplements: Object.fromEntries(SUPPLEMENTS.map(s => [s.id, false])),
+      supplements: {},
       workout: {
         type: scheduled || null,
         exercises: scheduled === "resistance" ? RESISTANCE_EXERCISES.map(name => ({ name, sets: [] })) : [],
@@ -301,12 +303,18 @@ function renderToday(day) {
 
     <div class="card">
       <h2>Daily checklist</h2>
-      ${SUPPLEMENTS.map(s => `
+      <div class="meal-item-macro" style="margin-bottom:8px;">Resets fresh every day — for recurring items like meds or supplements.</div>
+      ${state.checklistItems.map(s => `
         <div class="meal-item">
           <button class="todo-check ${day.supplements[s.id] ? "checked" : ""}" data-action="toggleSupplement" data-id="${s.id}"></button>
           <div class="todo-label">${s.label}</div>
+          <button class="remove-set" data-action="removeChecklistItem" data-id="${s.id}">✕</button>
         </div>
       `).join("")}
+      <div class="add-item-row" style="display:flex; gap:8px; margin-top:8px;">
+        <input type="text" id="checklist-input" placeholder="Add a recurring item…" style="flex:1;">
+        <button class="btn secondary" data-action="addChecklistItem">Add</button>
+      </div>
     </div>
 
     ${renderMealSwipeCard(day)}
@@ -844,6 +852,11 @@ document.getElementById("view-root").addEventListener("click", e => {
     day.supplements[el.dataset.id] = !day.supplements[el.dataset.id];
     saveState(); render(); return;
   }
+  if (action === "addChecklistItem") { addChecklistItemFromInput(); return; }
+  if (action === "removeChecklistItem") {
+    state.checklistItems = state.checklistItems.filter(s => s.id !== el.dataset.id);
+    saveState(); render(); return;
+  }
   if (action === "addTodo") { addTodoFromInput(); return; }
   if (action === "checkTodo") {
     state.todos = state.todos.filter(t => String(t.id) !== el.dataset.id);
@@ -920,6 +933,10 @@ document.getElementById("view-root").addEventListener("keydown", e => {
     e.preventDefault();
     addTodoFromInput();
   }
+  if (e.key === "Enter" && e.target.id === "checklist-input") {
+    e.preventDefault();
+    addChecklistItemFromInput();
+  }
 });
 
 // ---------- meal card swipe ----------
@@ -950,6 +967,15 @@ function addTodoFromInput() {
   const text = input.value.trim();
   if (!text) return;
   state.todos.push({ id: Date.now() + Math.random(), text });
+  saveState(); render();
+}
+
+function addChecklistItemFromInput() {
+  const input = document.getElementById("checklist-input");
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  state.checklistItems.push({ id: "custom_" + Date.now() + "_" + Math.floor(Math.random() * 1000), label: text });
   saveState(); render();
 }
 
