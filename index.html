@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Cut Plan Tracker</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cut Plan">
+<meta name="theme-color" content="#111318">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.json">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <header id="app-header">
+    <div class="header-title">Cut Plan Tracker</div>
+    <div id="day-counter" class="day-counter">—</div>
+  </header>
+
+  <main id="view-root"></main>
+
+  <nav id="bottom-nav">
+    <button class="nav-btn" data-tab="today">
+      <span class="nav-icon">✓</span><span class="nav-label">Today</span>
+    </button>
+    <button class="nav-btn" data-tab="workouts">
+      <span class="nav-icon">🏋</span><span class="nav-label">Workouts</span>
+    </button>
+    <button class="nav-btn" data-tab="progress">
+      <span class="nav-icon">📈</span><span class="nav-label">Progress</span>
+    </button>
+    <button class="nav-btn" data-tab="checkin">
+      <span class="nav-icon">🗓</span><span class="nav-label">Check-in</span>
+    </button>
+    <button class="nav-btn" data-tab="todo">
+      <span class="nav-icon">📝</span><span class="nav-label">To-Do</span>
+    </button>
+  </nav>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
