@@ -45,6 +45,15 @@ function loadState() {
         if (item.fat === undefined) item.fat = 0;
         if (item.carbs === undefined) item.carbs = 0;
       }
+      if (!parsed.customPresets) parsed.customPresets = [];
+      if (parsed.goal === undefined) parsed.goal = null;
+      // backward compat: water used to be logged in quarter-bottles, now plain ounces
+      for (const d of Object.values(parsed.days)) {
+        if (d.water && d.water.quarterBottles !== undefined) {
+          d.water.oz = d.water.quarterBottles * (BOTTLE_OZ / 4);
+          delete d.water.quarterBottles;
+        }
+      }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
       parsed.checklistItems.forEach(item => { if (item.recurring === undefined) item.recurring = true; });
@@ -70,6 +79,8 @@ function loadState() {
     weightUnit: "kg",
     routines: [defaultRoutine()],
     nextRoutineIndex: 0,
+    customPresets: [],
+    goal: null,
   };
 }
 
@@ -140,7 +151,7 @@ function getOrCreateDay(dateKey) {
     state.days[dateKey] = {
       scheduledActivity: scheduled,
       meals: emptyMealsFromTemplate(),
-      water: { quarterBottles: 0 },
+      water: { oz: 0 },
       supplements: {},
       workout: {
         type: scheduled || null,
@@ -242,15 +253,6 @@ function render() {
 
 // ---------- Today tab ----------
 
-function formatBottles(b) {
-  const rounded = Math.round(b * 100) / 100;
-  return `${rounded} bottle${rounded === 1 ? "" : "s"}`;
-}
-
-function formatWaterTarget(t) {
-  return t.min === t.max ? `${t.min}` : `${t.min}-${t.max}`;
-}
-
 function kgToLb(kg) {
   return Math.round(kg * KG_TO_LB * 10) / 10;
 }
@@ -305,6 +307,8 @@ function renderMealSwipeCard(day) {
 
 let quickAddOpen = false;
 let editDefaultsOpen = false;
+let goalFormOpen = false;
+let goalFormSex = null; // live selection while the goal form is open, before it's saved
 
 function renderMealDefaultsEditor(mealName) {
   const template = state.mealTemplates[mealName] || {};
@@ -385,12 +389,12 @@ function renderMealInner(day, mealName, title) {
         <div class="quick-add-form">
           <div class="field"><label>Name</label><input type="text" id="quickadd-name" placeholder="e.g. Family Mart onigiri"></div>
           <div class="two-col">
-            <div class="field"><label>Calories</label><input type="number" inputmode="numeric" id="quickadd-cal" placeholder="cal"></div>
-            <div class="field"><label>Protein (g)</label><input type="number" inputmode="numeric" id="quickadd-protein" placeholder="g"></div>
+            <div class="field"><label>Calories</label><input type="number" inputmode="decimal" step="0.1" id="quickadd-cal" placeholder="cal"></div>
+            <div class="field"><label>Protein (g)</label><input type="number" inputmode="decimal" step="0.1" id="quickadd-protein" placeholder="g"></div>
           </div>
           <div class="two-col">
-            <div class="field"><label>Carbs (g)</label><input type="number" inputmode="numeric" id="quickadd-carbs" placeholder="g"></div>
-            <div class="field"><label>Fat (g)</label><input type="number" inputmode="numeric" id="quickadd-fat" placeholder="g"></div>
+            <div class="field"><label>Carbs (g)</label><input type="number" inputmode="decimal" step="0.1" id="quickadd-carbs" placeholder="g"></div>
+            <div class="field"><label>Fat (g)</label><input type="number" inputmode="decimal" step="0.1" id="quickadd-fat" placeholder="g"></div>
           </div>
           <button class="btn" data-action="submitQuickAdd" data-meal="${mealName}" style="width:100%;">Add to ${title}</button>
         </div>
@@ -404,11 +408,13 @@ function renderMealInner(day, mealName, title) {
 
 function renderToday(day) {
   const totals = dayTotals(day);
-  const calTarget = isTrainingDay(day) ? state.targets.calTrain : state.targets.calRest;
+  const calTarget = calorieTargetFor(day) ?? (isTrainingDay(day) ? state.targets.calTrain : state.targets.calRest);
   const proteinTarget = state.targets.protein;
   const waterTarget = waterTargetFor(day.workout.type);
-  const bottles = day.water.quarterBottles / 4;
-  const waterPct = Math.min(100, Math.round((bottles / waterTarget.max) * 100));
+  const waterOz = day.water.oz || 0;
+  const waterTargetOzMin = waterTarget.min * BOTTLE_OZ;
+  const waterTargetOzMax = waterTarget.max * BOTTLE_OZ;
+  const waterPct = Math.min(100, Math.round((waterOz / waterTargetOzMax) * 100));
 
   const activityBadgeClass = day.workout.type || "rest";
 
@@ -483,12 +489,17 @@ function renderToday(day) {
 
     <div class="card">
       <h2>Water</h2>
-      <div class="water-row">
-        <button class="btn secondary" data-action="waterDelta" data-delta="-1">−¼ bottle</button>
-        <div class="water-track"><div class="water-fill" style="width:${waterPct}%"></div></div>
-        <button class="btn secondary" data-action="waterDelta" data-delta="1">+¼ bottle</button>
+      <div class="water-track"><div class="water-fill" style="width:${waterPct}%"></div></div>
+      <div class="field" style="margin-top:10px;">
+        <label>Ounces logged today</label>
+        <input type="number" inputmode="decimal" step="1" data-action="setWaterOz" value="${waterOz}">
       </div>
-      <div class="meal-item-macro" style="margin-top:6px;">${formatBottles(bottles)} logged (32 oz/bottle) · target ${formatWaterTarget(waterTarget)} bottle${waterTarget.max === 1 ? "" : "s"} (${waterTarget.min * BOTTLE_OZ}${waterTarget.min === waterTarget.max ? "" : `-${waterTarget.max * BOTTLE_OZ}`} oz)${day.workout.type === "boulder" ? " (bumped for bouldering)" : ""}</div>
+      <div class="row" style="gap:8px;">
+        <button class="btn secondary" data-action="waterAdd" data-oz="8" style="flex:1;">+8 oz</button>
+        <button class="btn secondary" data-action="waterAdd" data-oz="16" style="flex:1;">+16 oz</button>
+        <button class="btn secondary" data-action="waterAdd" data-oz="20" style="flex:1;">+20 oz</button>
+      </div>
+      <div class="meal-item-macro" style="margin-top:6px;">target ${waterTargetOzMin}${waterTargetOzMin === waterTargetOzMax ? "" : `-${waterTargetOzMax}`} oz${day.workout.type === "boulder" ? " (bumped for bouldering)" : ""}</div>
     </div>
 
     <div class="card">
@@ -512,10 +523,7 @@ function renderToday(day) {
 
     <div class="card">
       <h2>Body</h2>
-      <div class="two-col">
-        <div class="field"><label>Weight (lb)</label><input type="number" inputmode="decimal" step="0.1" data-action="setWeight" value="${day.weight ?? ""}"></div>
-        <div class="field"><label>Waist (in, weekly)</label><input type="number" inputmode="decimal" step="0.1" data-action="setWaist" value="${day.waist ?? ""}"></div>
-      </div>
+      <div class="field"><label>Weight (lb)</label><input type="number" inputmode="decimal" step="0.1" data-action="setWeight" value="${day.weight ?? ""}"></div>
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
     </div>
   `;
@@ -849,15 +857,64 @@ function renderWorkouts() {
 
 // ---------- Progress tab ----------
 
+function renderGoalCard() {
+  const g = state.goal;
+  const latestWeight = latestKnownWeight();
+
+  if (!g || goalFormOpen) {
+    const d = g || {};
+    const sex = goalFormSex || d.sex || "male";
+    return `
+      <div class="card">
+        <h2>Weight Goal</h2>
+        <div class="toggle-pill">
+          <button data-action="setGoalSex" data-sex="male" class="${sex === "male" ? "active" : ""}">Male</button>
+          <button data-action="setGoalSex" data-sex="female" class="${sex === "female" ? "active" : ""}">Female</button>
+        </div>
+        <div class="two-col" style="margin-top:10px;">
+          <div class="field"><label>Height (in)</label><input type="number" inputmode="decimal" step="0.1" id="goal-height" value="${d.heightIn ?? ""}"></div>
+          <div class="field"><label>Age</label><input type="number" inputmode="numeric" id="goal-age" value="${d.age ?? ""}"></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label>Starting weight (lb)</label><input type="number" inputmode="decimal" step="0.1" id="goal-start" value="${d.startWeight ?? latestWeight ?? ""}"></div>
+          <div class="field"><label>Goal weight (lb)</label><input type="number" inputmode="decimal" step="0.1" id="goal-target" value="${d.goalWeight ?? ""}"></div>
+        </div>
+        <div class="field"><label>Weeks to reach goal</label><input type="number" inputmode="decimal" step="0.5" id="goal-weeks" value="${d.weeks ?? ""}"></div>
+        <div class="row" style="gap:8px;">
+          <button class="btn" data-action="submitGoal" style="flex:1;">Save goal</button>
+          ${g ? `<button class="btn secondary" data-action="toggleGoalForm" style="flex:1;">Cancel</button>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  const weeklyRate = (g.goalWeight - g.startWeight) / g.weeks;
+  const elapsedWeeks = Math.max(0, Math.floor((Date.parse(formatDateKey(new Date())) - Date.parse(g.startDate)) / (7 * 86400000)));
+  const weeksLeft = Math.max(0, g.weeks - elapsedWeeks);
+  const today = getOrCreateDay(formatDateKey(new Date()));
+  const todayTarget = calorieTargetFor(today);
+  const rateWarning = Math.abs(weeklyRate) > 2 ? `<div class="meal-item-macro" style="color:var(--warn); margin-top:6px;">⚠ ${Math.abs(weeklyRate).toFixed(1)} lb/week is an aggressive rate — consider a longer timeframe.</div>` : "";
+
+  return `
+    <div class="card">
+      <div class="row"><h2 style="margin:0;">Weight Goal</h2><button class="icon-btn" data-action="toggleGoalForm">✎</button></div>
+      <div class="meal-item-macro">${g.startWeight} → ${g.goalWeight} lb over ${g.weeks} weeks (${weeklyRate >= 0 ? "+" : ""}${weeklyRate.toFixed(1)} lb/week)</div>
+      <div class="meal-item-macro">${weeksLeft} of ${g.weeks} weeks left</div>
+      <div class="meal-item-macro" style="margin-top:6px;">Today's calorie target: <strong style="color:var(--text);">${todayTarget}</strong></div>
+      ${rateWarning}
+      <div class="row" style="margin-top:10px;">
+        <button class="btn secondary" data-action="clearGoal" style="width:100%;">Clear goal</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderProgressShell() {
   return `
+    ${renderGoalCard()}
     <div class="card">
       <h2>Weight trend</h2>
       <div id="weight-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
-    </div>
-    <div class="card">
-      <h2>Waist (weekly)</h2>
-      <div id="waist-table-slot"><div class="empty-state">Loading…</div></div>
     </div>
     <div class="card">
       <h2>Photos</h2>
@@ -884,6 +941,40 @@ function weightSeries() {
     .sort((a, b) => a.x.localeCompare(b.x));
 }
 
+// ---------- goal-based calorie targeting ----------
+
+function latestKnownWeight() {
+  const series = weightSeries();
+  if (series.length) return series[series.length - 1].y;
+  return state.goal ? state.goal.startWeight : null;
+}
+
+function bmr(weightLb, heightIn, age, sex) {
+  const kg = weightLb / KG_TO_LB;
+  const cm = heightIn * 2.54;
+  const base = 10 * kg + 6.25 * cm - 5 * age;
+  return sex === "female" ? base - 161 : base + 5;
+}
+
+function requiredDailyDeltaKcal(goal) {
+  if (!goal || !goal.weeks) return 0;
+  const totalChangeLb = goal.goalWeight - goal.startWeight;
+  return (totalChangeLb * KCAL_PER_LB) / (goal.weeks * 7);
+}
+
+// Returns a whole-number calorie target for the day if a goal is set, else null
+// (callers fall back to the manual calRest/calTrain targets).
+function calorieTargetFor(day) {
+  const goal = state.goal;
+  if (!goal) return null;
+  const weight = latestKnownWeight() ?? goal.startWeight;
+  const base = bmr(weight, goal.heightIn, goal.age, goal.sex) * GOAL_ACTIVITY_MULTIPLIER;
+  const exerciseBonus = WORKOUT_KCAL_BONUS[day.workout.type] || 0;
+  const stepsBonus = (day.steps || 0) * STEP_KCAL_PER_STEP;
+  const delta = requiredDailyDeltaKcal(goal);
+  return Math.round(base + exerciseBonus + stepsBonus + delta);
+}
+
 function rollingAverageSeries(series, windowSize) {
   const out = [];
   for (let i = 0; i < series.length; i++) {
@@ -904,16 +995,6 @@ function hydrateProgress() {
     const avg = rollingAverageSeries(series, 7);
     slot.innerHTML = lineChartSVG([series, avg], ["#9aa1af", "#4fd1c5"]);
   }
-
-  const waistEntries = Object.entries(state.days)
-    .filter(([, d]) => d.waist != null && d.waist !== "")
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 12);
-  const waistSlot = document.getElementById("waist-table-slot");
-  waistSlot.innerHTML = waistEntries.length ? `
-    <table class="hist-table"><tr><th>Date</th><th>Waist (in)</th></tr>
-    ${waistEntries.map(([k, d]) => `<tr><td>${niceDate(k)}</td><td>${d.waist}</td></tr>`).join("")}
-    </table>` : `<div class="empty-state">No waist measurements yet</div>`;
 
   getAllPhotos().then(photos => {
     const grid = document.getElementById("photo-grid-slot");
@@ -977,14 +1058,17 @@ async function getAllPhotos() {
 // ---------- Climbing / hangboard timer ----------
 
 let climbingMode = "simple"; // "simple" | "presets"
+let savePresetOpen = false;
 let timerConfig = { sets: 1, reps: 8, work: 10, rest: 5, restBetweenSets: 60 };
-let timerPhase = null; // null (idle) | "work" | "rest" | "restBetweenSets" | "done"
+let timerPhase = null; // null (idle) | "prep" | "work" | "rest" | "restBetweenSets" | "done"
 let timerCurrentSet = 1;
 let timerCurrentRep = 1;
 let timerRemaining = 0;
 let timerIntervalId = null;
 let wakeLockSentinel = null;
 let audioCtx = null;
+const PREP_SECONDS = 5;
+let timerPrepReturn = null; // {phase, remaining} to resume into once the prep countdown finishes
 
 function formatMMSS(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds));
@@ -1030,8 +1114,15 @@ function startTimer() {
   if (timerPhase === null || timerPhase === "done") {
     timerCurrentSet = 1;
     timerCurrentRep = 1;
-    timerPhase = "work";
-    timerRemaining = timerConfig.work;
+    timerPrepReturn = { phase: "work", remaining: timerConfig.work };
+    timerPhase = "prep";
+    timerRemaining = PREP_SECONDS;
+    beep(880, 150);
+  } else if (timerPhase !== "prep" && timerIntervalId === null) {
+    // resuming after a pause mid-session — give a fresh prep countdown to get back set up
+    timerPrepReturn = { phase: timerPhase, remaining: timerRemaining };
+    timerPhase = "prep";
+    timerRemaining = PREP_SECONDS;
     beep(880, 150);
   }
   requestWakeLock();
@@ -1053,6 +1144,7 @@ function resetTimer() {
   timerCurrentSet = 1;
   timerCurrentRep = 1;
   timerRemaining = 0;
+  timerPrepReturn = null;
   render();
 }
 
@@ -1074,7 +1166,12 @@ function tickTimer() {
     return;
   }
 
-  if (timerPhase === "work") {
+  if (timerPhase === "prep") {
+    timerPhase = timerPrepReturn.phase;
+    timerRemaining = timerPrepReturn.remaining;
+    timerPrepReturn = null;
+    beep(880, 150);
+  } else if (timerPhase === "work") {
     if (timerCurrentRep < timerConfig.reps) {
       timerPhase = "rest";
       timerRemaining = timerConfig.rest;
@@ -1116,18 +1213,39 @@ function renderClimbing() {
     </div>
   ` : "";
 
+  const presetCard = (p, source, i, deletable) => `
+    <div class="meal-item">
+      <div>
+        <div class="meal-item-label">${p.name}</div>
+        ${p.description ? `<div class="meal-item-macro">${p.description}</div>` : ""}
+        <div class="meal-item-macro">${p.sets} sets × ${p.reps} reps · ${p.work}s work / ${p.rest}s rest</div>
+      </div>
+      <div class="row" style="gap:6px;">
+        ${deletable ? `<button class="icon-btn" data-action="deleteCustomPreset" data-idx="${i}">✕</button>` : ""}
+        <button class="btn secondary" data-action="selectPreset" data-source="${source}" data-idx="${i}">Load</button>
+      </div>
+    </div>
+  `;
+
   const presetList = (showConfig && climbingMode === "presets") ? `
     <div style="margin-top:12px;">
-      ${HANGBOARD_PRESETS.map((p, i) => `
-        <div class="meal-item">
-          <div>
-            <div class="meal-item-label">${p.name}</div>
-            <div class="meal-item-macro">${p.description}</div>
-            <div class="meal-item-macro">${p.sets} sets × ${p.reps} reps · ${p.work}s work / ${p.rest}s rest</div>
-          </div>
-          <button class="btn secondary" data-action="selectPreset" data-idx="${i}">Load</button>
+      ${HANGBOARD_PRESETS.map((p, i) => presetCard(p, "builtin", i, false)).join("")}
+      ${state.customPresets.length ? `
+        <div class="meal-item-macro" style="margin:10px 0 2px; text-transform:uppercase; letter-spacing:0.4px;">Your protocols</div>
+        ${state.customPresets.map((p, i) => presetCard(p, "custom", i, true)).join("")}
+      ` : ""}
+    </div>
+  ` : "";
+
+  const savePresetForm = showConfig ? `
+    <div style="margin-top:10px;">
+      <button class="btn secondary" data-action="toggleSavePreset" style="width:100%;">${savePresetOpen ? "Cancel" : "+ Save current settings as preset"}</button>
+      ${savePresetOpen ? `
+        <div class="quick-add-form">
+          <div class="field"><label>Preset name</label><input type="text" id="save-preset-name" placeholder="e.g. My Repeaters"></div>
+          <button class="btn" data-action="submitSavePreset" style="width:100%;">Save preset</button>
         </div>
-      `).join("")}
+      ` : ""}
     </div>
   ` : "";
 
@@ -1148,9 +1266,9 @@ function renderClimbing() {
     </div>
   ` : "";
 
-  const phaseLabel = { work: "Work", rest: "Rest", restBetweenSets: "Rest (between sets)", done: "Done!" }[timerPhase] || "Ready";
+  const phaseLabel = { prep: "Get Ready", work: "Work", rest: "Rest", restBetweenSets: "Rest (between sets)", done: "Done!" }[timerPhase] || "Ready";
   const displayTime = isIdle ? formatMMSS(totalSeconds) : isDone ? "Done!" : formatMMSS(timerRemaining);
-  const phaseClass = timerPhase === "work" ? "work" : (timerPhase === "rest" || timerPhase === "restBetweenSets") ? "rest" : timerPhase === "done" ? "done" : "";
+  const phaseClass = timerPhase === "work" ? "work" : (timerPhase === "rest" || timerPhase === "restBetweenSets" || timerPhase === "prep") ? "rest" : timerPhase === "done" ? "done" : "";
 
   return `
     <div class="card">
@@ -1158,6 +1276,7 @@ function renderClimbing() {
       ${modeSwitcher}
       ${presetList}
       ${configPanel}
+      ${savePresetForm}
       <div class="timer-display ${phaseClass}">
         <div class="timer-phase">${isIdle ? "Total time" : phaseLabel}</div>
         <div class="timer-clock" id="timer-clock">${displayTime}</div>
@@ -1267,9 +1386,25 @@ document.getElementById("view-root").addEventListener("click", e => {
     render(); return;
   }
   if (action === "selectPreset") {
-    const p = HANGBOARD_PRESETS[Number(el.dataset.idx)];
+    const list = el.dataset.source === "custom" ? state.customPresets : HANGBOARD_PRESETS;
+    const p = list[Number(el.dataset.idx)];
     timerConfig = { sets: p.sets, reps: p.reps, work: p.work, rest: p.rest, restBetweenSets: p.restBetweenSets };
     render(); return;
+  }
+  if (action === "toggleSavePreset") {
+    savePresetOpen = !savePresetOpen;
+    render(); return;
+  }
+  if (action === "submitSavePreset") {
+    const name = document.getElementById("save-preset-name").value.trim();
+    if (!name) return;
+    state.customPresets.push({ name, sets: timerConfig.sets, reps: timerConfig.reps, work: timerConfig.work, rest: timerConfig.rest, restBetweenSets: timerConfig.restBetweenSets });
+    savePresetOpen = false;
+    saveState(); render(); return;
+  }
+  if (action === "deleteCustomPreset") {
+    state.customPresets.splice(Number(el.dataset.idx), 1);
+    saveState(); render(); return;
   }
   if (action === "startTimer") { startTimer(); return; }
   if (action === "pauseTimer") { pauseTimer(); return; }
@@ -1353,8 +1488,8 @@ document.getElementById("view-root").addEventListener("click", e => {
     quickAddOpen = false;
     saveState(); render(); return;
   }
-  if (action === "waterDelta") {
-    day.water.quarterBottles = Math.max(0, day.water.quarterBottles + Number(el.dataset.delta));
+  if (action === "waterAdd") {
+    day.water.oz = Math.max(0, (day.water.oz || 0) + Number(el.dataset.oz));
     saveState(); render(); return;
   }
   if (action === "setWorkoutType") {
@@ -1410,6 +1545,37 @@ document.getElementById("view-root").addEventListener("click", e => {
     saveState(); render(); return;
   }
   if (action === "exportData") { exportData(); return; }
+  if (action === "toggleGoalForm") {
+    goalFormOpen = !goalFormOpen;
+    goalFormSex = null;
+    render(); return;
+  }
+  if (action === "setGoalSex") {
+    goalFormSex = el.dataset.sex;
+    render(); return;
+  }
+  if (action === "submitGoal") {
+    const heightIn = Number(document.getElementById("goal-height").value);
+    const age = Number(document.getElementById("goal-age").value);
+    const startWeight = Number(document.getElementById("goal-start").value);
+    const goalWeight = Number(document.getElementById("goal-target").value);
+    const weeks = Number(document.getElementById("goal-weeks").value);
+    if (!heightIn || !age || !startWeight || !goalWeight || !weeks) return;
+    const sex = goalFormSex || (state.goal && state.goal.sex) || "male";
+    state.goal = {
+      sex, heightIn, age, startWeight, goalWeight, weeks,
+      startDate: (state.goal && state.goal.startDate) || formatDateKey(new Date()),
+    };
+    goalFormOpen = false;
+    goalFormSex = null;
+    saveState(); render(); return;
+  }
+  if (action === "clearGoal") {
+    state.goal = null;
+    goalFormOpen = false;
+    goalFormSex = null;
+    saveState(); render(); return;
+  }
 });
 
 document.getElementById("view-root").addEventListener("input", e => {
@@ -1420,7 +1586,7 @@ document.getElementById("view-root").addEventListener("input", e => {
 
   if (action === "setWeight") { day.weight = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setSteps") { day.steps = el.value === "" ? null : Number(el.value); saveState(); return; }
-  if (action === "setWaist") { day.waist = el.value === "" ? null : Number(el.value); saveState(); return; }
+  if (action === "setWaterOz") { day.water.oz = el.value === "" ? 0 : Number(el.value); saveState(); return; }
   if (action === "setNotes") { day.notes = el.value; saveState(); return; }
   if (action === "setTimerField") {
     const field = el.dataset.field;

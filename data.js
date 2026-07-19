@@ -16,6 +16,14 @@ const DEFAULT_TARGETS = {
 
 const BOTTLE_OZ = 32;
 
+// Goal-based calorie targeting (Mifflin-St Jeor BMR + a sedentary base activity multiplier;
+// workouts and steps add their own bonus on top so more active days earn more calories,
+// similar in spirit to MyFitnessPal's adaptive daily goal).
+const KCAL_PER_LB = 3500; // standard approximation for 1 lb of body fat
+const GOAL_ACTIVITY_MULTIPLIER = 1.2; // sedentary baseline — exercise/steps bonuses cover the rest
+const STEP_KCAL_PER_STEP = 0.04;
+const WORKOUT_KCAL_BONUS = { rest: 0, resistance: 150, run: 250, boulder: 300 };
+
 // Bump suggested water target on bouldering days (long, high-sweat sessions).
 function waterTargetFor(activity) {
   if (activity === "boulder") return { min: 3, max: 3 };
@@ -79,10 +87,10 @@ const ITEM_CATALOG = {
   fruit:             { label: "Fruit (piece)",           cal: 90,  protein: 1,  fat: 0,   carbs: 23 },
   espresso:          { label: "Espresso",                cal: 5,   protein: 1,  fat: 0,   carbs: 1 },
   whey_scoop:        { label: "Whey protein (scoop)",    cal: 120, protein: 24, fat: 2,   carbs: 3 },
-  pb2_scoop:         { label: "PB2 Pro (scoop)",         cal: 65,  protein: 13, fat: 1.5, carbs: 5 },
+  pb2_scoop:         { label: "PB2 powder (scoop)",      cal: 60,  protein: 6,  fat: 1.5, carbs: 5 },
   redbull_sf:        { label: "Sugar-free energy drink", cal: 10,  protein: 0,  fat: 0,   carbs: 2 },
   greens:            { label: "Greens",                  cal: 20,  protein: 2,  fat: 0,   carbs: 3 },
-  tuna_spicy_scoop:  { label: "Spicy tuna (scoop)",       cal: 45,  protein: 9,  fat: 2,   carbs: 3 },
+  tuna_spicy_scoop:  { label: "Spicy tuna (scoop)",       cal: 60,  protein: 5,  fat: 4,   carbs: 1 },
   tuna_raw_scoop:    { label: "Raw tuna (scoop)",         cal: 40,  protein: 10, fat: 0.5, carbs: 0 },
   boiled_egg:        { label: "Boiled egg (store)",       cal: 70,  protein: 6,  fat: 5,   carbs: 0.5 },
   tofu_pack:         { label: "Tofu pack (store)",        cal: 80,  protein: 8,  fat: 4,   carbs: 2 },

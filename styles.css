@@ -293,12 +293,6 @@ button.btn:disabled {
   color: var(--text);
 }
 
-.water-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 .water-track {
   flex: 1;
   height: 10px;
