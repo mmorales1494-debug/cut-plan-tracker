@@ -29,7 +29,7 @@ function loadState() {
     } catch (e) { /* fall through to fresh state */ }
   }
   return {
-    meta: { startDate: PLAN_START, endDateTarget: PLAN_END_TARGET },
+    meta: { startDate: PLAN_START },
     targets: { ...DEFAULT_TARGETS },
     days: {},
     checkIns: [],
@@ -141,7 +141,7 @@ function render() {
   const root = document.getElementById("view-root");
   const day = getOrCreateDay(viewDate);
   document.getElementById("day-counter").textContent =
-    `Day ${dayNumberFor(viewDate)} of ${TOTAL_DAYS} · ${niceDate(viewDate)}`;
+    `Day ${dayNumberFor(viewDate)} · ${niceDate(viewDate)}`;
 
   if (currentTab === "today") root.innerHTML = renderToday(day);
   else if (currentTab === "workouts") root.innerHTML = renderWorkouts();
@@ -476,6 +476,31 @@ function collectExerciseHistory(name) {
   return rows;
 }
 
+function scheduledActivityLabel(scheduled) {
+  return scheduled === null ? "Flexible / make-up day" : activityLabel(scheduled);
+}
+
+function renderUpcomingSchedule(daysAhead) {
+  const todayKey = formatDateKey(new Date());
+  const rows = [];
+  for (let i = 0; i < daysAhead; i++) {
+    const key = addDays(todayKey, i);
+    const scheduled = WEEKLY_SCHEDULE[parseKey(key).getDay()];
+    rows.push(`
+      <div class="meal-item">
+        <div class="meal-item-label">${i === 0 ? "Today — " : ""}${niceDate(key)}</div>
+        <span class="badge ${scheduled || "rest"}">${scheduledActivityLabel(scheduled)}</span>
+      </div>
+    `);
+  }
+  return `
+    <div class="card">
+      <h2>Upcoming schedule</h2>
+      ${rows.join("")}
+    </div>
+  `;
+}
+
 function renderWorkouts() {
   const exerciseBlocks = RESISTANCE_EXERCISES.map(name => {
     const rows = collectExerciseHistory(name);
@@ -516,6 +541,7 @@ function renderWorkouts() {
   ` : `<div class="empty-state">No cardio sessions logged yet</div>`;
 
   return `
+    ${renderUpcomingSchedule(14)}
     <div class="card"><h2>Resistance progression</h2></div>
     ${exerciseBlocks}
     <div class="card"><h2>Run / boulder log</h2>${cardioTable}</div>
@@ -671,13 +697,17 @@ function computeRollingTrendAsOf(cutoffKey) {
   return { currentAvg, prevAvg, weeklyRateLbs };
 }
 
+function nextCheckinDayNumber() {
+  const done = new Set(state.checkIns.map(c => c.dayNumber));
+  let n = CHECKIN_INTERVAL_DAYS;
+  while (done.has(n)) n += CHECKIN_INTERVAL_DAYS;
+  return n;
+}
+
 function pendingCheckinDayNumber() {
   const today = dayNumberFor(formatDateKey(new Date()));
-  const doneNumbers = new Set(state.checkIns.map(c => c.dayNumber));
-  for (let n = CHECKIN_INTERVAL_DAYS; n <= TOTAL_DAYS; n += CHECKIN_INTERVAL_DAYS) {
-    if (n <= today && !doneNumbers.has(n)) return n;
-  }
-  return null;
+  const next = nextCheckinDayNumber();
+  return next <= today ? next : null;
 }
 
 function suggestionFor(trend) {
@@ -724,11 +754,7 @@ function renderCheckin() {
   `).join("");
 
   return `
-    ${pendingBlock || `<div class="card"><h2>Check-in</h2><div class="empty-state">Next check-in at day ${(() => {
-      const done = new Set(state.checkIns.map(c => c.dayNumber));
-      for (let n = CHECKIN_INTERVAL_DAYS; n <= TOTAL_DAYS; n += CHECKIN_INTERVAL_DAYS) if (!done.has(n)) return n;
-      return TOTAL_DAYS;
-    })()}</div></div>`}
+    ${pendingBlock || `<div class="card"><h2>Check-in</h2><div class="empty-state">Next check-in at day ${nextCheckinDayNumber()}</div></div>`}
     <div class="card">
       <h2>Current targets</h2>
       <div class="meal-item-macro">Rest day: ${state.targets.calRest} cal · Training day: ${state.targets.calTrain} cal · Protein: ${state.targets.protein}g</div>

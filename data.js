@@ -1,9 +1,8 @@
 // Static plan data: meal items, exercises, weekly schedule, targets.
 // No personal identifiers here by design — this file is served publicly.
 
+// Anchor date for the "Day N" counter — an ongoing lifestyle app, no fixed end date.
 const PLAN_START = "2026-07-17";
-const PLAN_END_TARGET = "2026-09-30";
-const TOTAL_DAYS = 75;
 
 const DEFAULT_TARGETS = {
   calRest: 1900,
