@@ -154,8 +154,7 @@ function render() {
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === currentTab));
   const root = document.getElementById("view-root");
   const day = getOrCreateDay(viewDate);
-  document.getElementById("day-counter").textContent =
-    `Day ${dayNumberFor(viewDate)} · ${niceDate(viewDate)}`;
+  document.getElementById("day-counter").textContent = niceDate(viewDate);
 
   if (currentTab === "today") root.innerHTML = renderToday(day);
   else if (currentTab === "workouts") root.innerHTML = renderWorkouts();
