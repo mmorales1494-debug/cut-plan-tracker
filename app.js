@@ -15,6 +15,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
+      if (!parsed.customItems) parsed.customItems = {};
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
       parsed.checklistItems.forEach(item => { if (item.recurring === undefined) item.recurring = true; });
@@ -34,6 +35,7 @@ function loadState() {
     days: {},
     checkIns: [],
     checklistItems: SUPPLEMENTS.map(s => ({ ...s })),
+    customItems: {},
   };
 }
 
@@ -113,10 +115,14 @@ function isTrainingDay(day) {
   return day.workout.type === "resistance" || day.workout.type === "run" || day.workout.type === "boulder";
 }
 
+function itemDef(id) {
+  return ITEM_CATALOG[id] || state.customItems[id];
+}
+
 function mealTotals(meal) {
   let cal = 0, protein = 0;
   for (const [id, qty] of Object.entries(meal)) {
-    const item = ITEM_CATALOG[id];
+    const item = itemDef(id);
     if (!item || !qty) continue;
     cal += item.cal * qty;
     protein += item.protein * qty;
@@ -209,13 +215,15 @@ function renderMealSwipeCard(day) {
     </div>`;
 }
 
+let quickAddOpen = false;
+
 function renderMealInner(day, mealName, title) {
   const meal = day.meals[mealName];
   const template = MEAL_TEMPLATES[mealName] || {};
   const totals = mealTotals(meal);
   const entries = Object.entries(meal);
   const rows = entries.length ? entries.map(([id, qty]) => {
-    const item = ITEM_CATALOG[id];
+    const item = itemDef(id);
     const planned = template[id];
     return `
       <div class="meal-item">
@@ -231,8 +239,9 @@ function renderMealInner(day, mealName, title) {
       </div>`;
   }).join("") : `<div class="empty-state">Nothing planned — add an item below</div>`;
 
-  const notInMeal = Object.keys(ITEM_CATALOG).filter(id => !(id in meal));
-  const options = notInMeal.map(id => `<option value="${id}">${ITEM_CATALOG[id].label}</option>`).join("");
+  const allIds = [...Object.keys(ITEM_CATALOG), ...Object.keys(state.customItems)];
+  const notInMeal = allIds.filter(id => !(id in meal));
+  const options = notInMeal.map(id => `<option value="${id}">${itemDef(id).label}</option>`).join("");
   const hasTemplate = Object.keys(template).length > 0;
 
   return `
@@ -244,6 +253,19 @@ function renderMealInner(day, mealName, title) {
         ${options}
       </select>
       ${hasTemplate ? `<button class="btn secondary" data-action="mealLogPlanned" data-meal="${mealName}">Log as planned</button>` : ""}
+    </div>
+    <div style="margin-top:8px;">
+      <button class="btn secondary" data-action="toggleQuickAdd" style="width:100%;">${quickAddOpen ? "Cancel quick add" : "+ Quick add by macros"}</button>
+      ${quickAddOpen ? `
+        <div class="quick-add-form">
+          <div class="field"><label>Name</label><input type="text" id="quickadd-name" placeholder="e.g. Family Mart onigiri"></div>
+          <div class="two-col">
+            <div class="field"><label>Calories</label><input type="number" inputmode="numeric" id="quickadd-cal" placeholder="cal"></div>
+            <div class="field"><label>Protein (g)</label><input type="number" inputmode="numeric" id="quickadd-protein" placeholder="g"></div>
+          </div>
+          <button class="btn" data-action="submitQuickAdd" data-meal="${mealName}" style="width:100%;">Add to ${title}</button>
+        </div>
+      ` : ""}
     </div>`;
 }
 
@@ -785,15 +807,18 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "navDay") {
     viewDate = addDays(viewDate, Number(el.dataset.delta));
     mealTabIndex = 0;
+    quickAddOpen = false;
     render(); return;
   }
   if (action === "jumpToday") {
     viewDate = formatDateKey(new Date());
     mealTabIndex = 0;
+    quickAddOpen = false;
     render(); return;
   }
   if (action === "setMealTab") {
     mealTabIndex = Number(el.dataset.idx);
+    quickAddOpen = false;
     render(); return;
   }
   if (action === "closeDay") {
@@ -819,6 +844,22 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "mealLogPlanned") {
     const mealName = el.dataset.meal;
     day.meals[mealName] = { ...day.meals[mealName], ...MEAL_TEMPLATES[mealName] };
+    saveState(); render(); return;
+  }
+  if (action === "toggleQuickAdd") {
+    quickAddOpen = !quickAddOpen;
+    render(); return;
+  }
+  if (action === "submitQuickAdd") {
+    const mealName = el.dataset.meal;
+    const name = document.getElementById("quickadd-name").value.trim();
+    const cal = Number(document.getElementById("quickadd-cal").value) || 0;
+    const protein = Number(document.getElementById("quickadd-protein").value) || 0;
+    if (!name) return;
+    const id = "custom_food_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    state.customItems[id] = { label: name, cal, protein };
+    day.meals[mealName][id] = 1;
+    quickAddOpen = false;
     saveState(); render(); return;
   }
   if (action === "waterDelta") {
@@ -968,6 +1009,7 @@ document.getElementById("view-root").addEventListener("touchend", e => {
   if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy)) return; // ignore short/vertical swipes
   if (dx < 0) mealTabIndex = Math.min(MEAL_ORDER.length - 1, mealTabIndex + 1);
   else mealTabIndex = Math.max(0, mealTabIndex - 1);
+  quickAddOpen = false;
   render();
 });
 
