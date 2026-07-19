@@ -14,6 +14,7 @@ function defaultRoutine() {
   return {
     id: "routine_1",
     name: "Full Body",
+    active: true,
     exercises: [...RESISTANCE_EXERCISES],
     setTarget: { ...SET_TARGET },
     repTarget: { ...REP_TARGET },
@@ -29,6 +30,8 @@ function loadState() {
       if (!parsed.customItems) parsed.customItems = {};
       if (!parsed.weeklySchedule) parsed.weeklySchedule = { ...WEEKLY_SCHEDULE };
       if (!parsed.routines || !parsed.routines.length) parsed.routines = [defaultRoutine()];
+      parsed.routines.forEach(r => { if (r.active === undefined) r.active = true; });
+      if (!parsed.routines.some(r => r.active)) parsed.routines[0].active = true;
       if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
       for (const item of Object.values(parsed.customItems)) { if (item.fat === undefined) item.fat = 0; }
@@ -109,11 +112,13 @@ function routineForDay(day) {
 }
 
 function populateResistanceExercises(day) {
-  const idx = state.nextRoutineIndex % state.routines.length;
-  const routine = state.routines[idx];
+  const active = state.routines.filter(r => r.active);
+  const pool = active.length ? active : state.routines;
+  const idx = state.nextRoutineIndex % pool.length;
+  const routine = pool[idx];
   day.workout.exercises = routine.exercises.map(name => ({ name, sets: [] }));
   day.workout.routineId = routine.id;
-  state.nextRoutineIndex = (idx + 1) % state.routines.length;
+  state.nextRoutineIndex = (idx + 1) % pool.length;
 }
 
 function getOrCreateDay(dateKey) {
@@ -621,7 +626,11 @@ function renderRoutineManager() {
 
     return `
       <div class="exercise-block">
-        <div class="field"><label>Routine name</label><input type="text" data-action="setRoutineField" data-routine="${routine.id}" data-field="name" value="${routine.name}"></div>
+        <div class="row">
+          <h3 style="margin:0;">${routine.name}</h3>
+          <button class="btn ${routine.active ? "" : "secondary"}" data-action="toggleRoutineActive" data-routine="${routine.id}">${routine.active ? "Active ✓" : "Inactive"}</button>
+        </div>
+        <div class="field" style="margin-top:10px;"><label>Routine name</label><input type="text" data-action="setRoutineField" data-routine="${routine.id}" data-field="name" value="${routine.name}"></div>
         <div class="two-col">
           <div class="field"><label>Sets (min)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="setMin" value="${routine.setTarget.min}"></div>
           <div class="field"><label>Sets (max)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="setMax" value="${routine.setTarget.max}"></div>
@@ -642,15 +651,20 @@ function renderRoutineManager() {
     `;
   }).join("");
 
+  const hasStrongLifts = state.routines.some(r => r.name === "StrongLifts A" || r.name === "StrongLifts B");
+
   return `
     <div class="card">
       <h2>Workout routines</h2>
-      <div class="meal-item-macro" style="margin-bottom:10px;">One routine = same workout every resistance day. Two or more rotate by session (A/B/A/B…), not by weekday — e.g. StrongLifts.</div>
+      <div class="meal-item-macro" style="margin-bottom:10px;">Only <strong>Active</strong> routines rotate on resistance days — one routine repeats every time, two or more alternate by session (A/B/A/B…), not by weekday. Inactive routines sit ready to switch to later.</div>
       ${routineBlocks}
       <div class="add-item-row" style="display:flex; gap:8px; margin-top:4px;">
         <input type="text" id="new-routine-name" placeholder="New routine name…" style="flex:1;">
         <button class="btn secondary" data-action="addRoutine">+ Add routine</button>
       </div>
+      ${hasStrongLifts ? "" : `
+        <button class="btn secondary" data-action="addStrongLiftsPreset" style="width:100%; margin-top:8px;">+ Add StrongLifts 5x5 (A/B, inactive)</button>
+      `}
     </div>
   `;
 }
@@ -1022,11 +1036,30 @@ document.getElementById("view-root").addEventListener("click", e => {
     state.routines.push({
       id: "routine_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
       name,
+      active: true,
       exercises: [],
       setTarget: { ...SET_TARGET },
       repTarget: { ...REP_TARGET },
       weightStepKg: WEIGHT_STEP_KG,
     });
+    saveState(); render(); return;
+  }
+  if (action === "addStrongLiftsPreset") {
+    const stamp = Date.now();
+    state.routines.push(
+      { id: "routine_sl_a_" + stamp, name: "StrongLifts A", active: false,
+        exercises: ["Squat", "Bench Press", "Barbell Row"],
+        setTarget: { min: 5, max: 5 }, repTarget: { min: 5, max: 5 }, weightStepKg: 2.5 },
+      { id: "routine_sl_b_" + stamp, name: "StrongLifts B", active: false,
+        exercises: ["Squat", "Overhead Press", "Deadlift"],
+        setTarget: { min: 5, max: 5 }, repTarget: { min: 5, max: 5 }, weightStepKg: 2.5 }
+    );
+    saveState(); render(); return;
+  }
+  if (action === "toggleRoutineActive") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    if (routine.active && state.routines.filter(r => r.active).length <= 1) return;
+    routine.active = !routine.active;
     saveState(); render(); return;
   }
   if (action === "deleteRoutine") {
