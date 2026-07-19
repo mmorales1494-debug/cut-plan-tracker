@@ -1,4 +1,4 @@
-const CACHE_NAME = "cut-plan-shell-v2";
+const CACHE_NAME = "cut-plan-shell-v3";
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -27,11 +27,13 @@ self.addEventListener("activate", event => {
 
 // Network-first: always try to fetch the latest version when online, so pushed
 // updates show up on next load instead of being stuck on whatever was cached first.
-// Falls back to the cache only when offline.
+// cache: "no-store" bypasses the browser's own HTTP cache too, not just the SW cache —
+// otherwise the browser can quietly serve a stale file even though this handler "asked
+// the network." Falls back to the SW cache only when actually offline.
 self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    fetch(event.request).then(res => {
+    fetch(event.request, { cache: "no-store" }).then(res => {
       const copy = res.clone();
       caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
       return res;
