@@ -28,6 +28,29 @@ const SET_TARGET = { min: 3, max: 4 };
 const WEIGHT_STEP_KG = 2.5;
 const KG_TO_LB = 2.20462;
 
+// Standard barbell + plate assumptions for the plate-loading calculator.
+const BAR_WEIGHT = { kg: 20, lb: 45 };
+const PLATE_DENOMS = {
+  kg: [20, 15, 10, 5, 2.5, 1.25],
+  lb: [45, 35, 25, 10, 5, 2.5],
+};
+
+// Greedy plate breakdown for one side of the bar. Returns null if the target is
+// lighter than an empty bar (nothing to load).
+function plateBreakdown(totalWeight, unit) {
+  const bar = BAR_WEIGHT[unit];
+  let perSide = (totalWeight - bar) / 2;
+  if (perSide <= 0) return null;
+  const plates = [];
+  for (const denom of PLATE_DENOMS[unit]) {
+    while (perSide >= denom - 0.05) {
+      plates.push(denom);
+      perSide -= denom;
+    }
+  }
+  return { plates, bar };
+}
+
 // Core work targets — spec just says "10-15 min, progressive," so these are reasonable
 // bodyweight/ab-work defaults: higher rep range than resistance work, same set count.
 const CORE_REP_TARGET = { min: 12, max: 20 };

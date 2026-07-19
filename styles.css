@@ -367,6 +367,23 @@ button.btn:disabled {
 }
 .icon-btn:disabled { opacity: 0.35; }
 
+.plate-calc {
+  margin: -2px 0 8px 36px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.plate-calc-label { margin-right: 4px; }
+.plate-chip {
+  display: inline-block;
+  background: var(--accent-dim);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-right: 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .field {
   margin-bottom: 10px;
 }

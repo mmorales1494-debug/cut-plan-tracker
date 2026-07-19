@@ -15,7 +15,7 @@ function defaultRoutine() {
     id: "routine_1",
     name: "Full Body",
     active: true,
-    exercises: [...RESISTANCE_EXERCISES],
+    exercises: RESISTANCE_EXERCISES.map(name => ({ name, barbell: false })),
     setTarget: { ...SET_TARGET },
     repTarget: { ...REP_TARGET },
     weightStepKg: WEIGHT_STEP_KG,
@@ -29,8 +29,14 @@ function loadState() {
       const parsed = JSON.parse(raw);
       if (!parsed.customItems) parsed.customItems = {};
       if (!parsed.weeklySchedule) parsed.weeklySchedule = { ...WEEKLY_SCHEDULE };
+      if (!parsed.mealTemplates) parsed.mealTemplates = JSON.parse(JSON.stringify(MEAL_TEMPLATES));
+      if (!parsed.weightUnit) parsed.weightUnit = "kg";
       if (!parsed.routines || !parsed.routines.length) parsed.routines = [defaultRoutine()];
       parsed.routines.forEach(r => { if (r.active === undefined) r.active = true; });
+      // backward compat: routine exercises used to be plain name strings, now {name, barbell}
+      parsed.routines.forEach(r => {
+        r.exercises = r.exercises.map(ex => typeof ex === "string" ? { name: ex, barbell: false } : ex);
+      });
       if (!parsed.routines.some(r => r.active)) parsed.routines[0].active = true;
       if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
@@ -60,6 +66,8 @@ function loadState() {
     checklistItems: SUPPLEMENTS.map(s => ({ ...s })),
     customItems: {},
     weeklySchedule: { ...WEEKLY_SCHEDULE },
+    mealTemplates: JSON.parse(JSON.stringify(MEAL_TEMPLATES)),
+    weightUnit: "kg",
     routines: [defaultRoutine()],
     nextRoutineIndex: 0,
   };
@@ -103,9 +111,9 @@ function niceDate(k) {
 
 function emptyMealsFromTemplate() {
   const meals = {};
-  for (const mealName of Object.keys(MEAL_TEMPLATES)) {
+  for (const mealName of Object.keys(state.mealTemplates)) {
     meals[mealName] = {};
-    for (const id of Object.keys(MEAL_TEMPLATES[mealName])) meals[mealName][id] = 0;
+    for (const id of Object.keys(state.mealTemplates[mealName])) meals[mealName][id] = 0;
   }
   return meals;
 }
@@ -120,7 +128,7 @@ function populateResistanceExercises(day) {
   const pool = active.length ? active : state.routines;
   const idx = state.nextRoutineIndex % pool.length;
   const routine = pool[idx];
-  day.workout.exercises = routine.exercises.map(name => ({ name, sets: [] }));
+  day.workout.exercises = routine.exercises.map(ex => ({ name: ex.name, barbell: !!ex.barbell, sets: [] }));
   day.workout.routineId = routine.id;
   state.nextRoutineIndex = (idx + 1) % pool.length;
 }
@@ -247,7 +255,29 @@ function kgToLb(kg) {
   return Math.round(kg * KG_TO_LB * 10) / 10;
 }
 
+function lbToKg(lb) {
+  return Math.round((lb / KG_TO_LB) * 10) / 10;
+}
+
+// All weights are stored in kg internally regardless of preference — these two
+// helpers are the only place that converts to/from the unit the user sees and types.
+function toDisplayWeight(kg) {
+  if (kg === "" || kg === null || kg === undefined) return "";
+  return state.weightUnit === "lb" ? kgToLb(kg) : Math.round(kg * 10) / 10;
+}
+
+function toStorageWeight(displayVal) {
+  if (displayVal === "" || displayVal === null || displayVal === undefined) return "";
+  const num = Number(displayVal);
+  // Keep extra precision here (not rounded to 1dp like the display helpers) so a
+  // lb entry that round-trips through kg storage doesn't drift off its plate match
+  // (e.g. 135 lb -> kg -> lb landing on 134.9 and missing the exact 45s-per-side).
+  const kg = state.weightUnit === "lb" ? num / KG_TO_LB : num;
+  return Math.round(kg * 1000) / 1000;
+}
+
 function formatKgLb(kg) {
+  if (state.weightUnit === "lb") return `${kgToLb(kg)} lb (${Math.round(kg * 10) / 10} kg)`;
   return `${kg} kg (${kgToLb(kg)} lb)`;
 }
 
@@ -274,10 +304,47 @@ function renderMealSwipeCard(day) {
 }
 
 let quickAddOpen = false;
+let editDefaultsOpen = false;
+
+function renderMealDefaultsEditor(mealName) {
+  const template = state.mealTemplates[mealName] || {};
+  const entries = Object.entries(template);
+  const rows = entries.length ? entries.map(([id, qty]) => {
+    const item = itemDef(id);
+    if (!item) return "";
+    return `
+      <div class="meal-item">
+        <div class="meal-item-label">${item.label}</div>
+        <div class="stepper">
+          <button data-action="templateQty" data-meal="${mealName}" data-item="${id}" data-delta="-1">−</button>
+          <div class="qty">${qty}</div>
+          <button data-action="templateQty" data-meal="${mealName}" data-item="${id}" data-delta="1">+</button>
+        </div>
+      </div>`;
+  }).join("") : `<div class="empty-state">No planned items — add one below</div>`;
+
+  const allIds = [...Object.keys(ITEM_CATALOG), ...Object.keys(state.customItems)];
+  const notInTemplate = allIds.filter(id => !(id in template));
+  const options = notInTemplate.map(id => `<option value="${id}">${itemDef(id).label}</option>`).join("");
+
+  return `
+    <div class="quick-add-form">
+      <div class="meal-item-macro" style="margin-bottom:8px;">Editing the planned defaults for this meal — used by "Log as planned" and shown as the hint next to each item.</div>
+      ${rows}
+      <div class="add-item-row" style="display:flex; gap:8px; margin-top:8px;">
+        <select id="template-add-${mealName}" style="flex:1;">
+          <option value="">+ add to defaults…</option>
+          ${options}
+        </select>
+        <button class="btn secondary" data-action="addTemplateItem" data-meal="${mealName}">Add</button>
+      </div>
+    </div>
+  `;
+}
 
 function renderMealInner(day, mealName, title) {
   const meal = day.meals[mealName];
-  const template = MEAL_TEMPLATES[mealName] || {};
+  const template = state.mealTemplates[mealName] || {};
   const totals = mealTotals(meal);
   const entries = Object.entries(meal);
   const rows = entries.length ? entries.map(([id, qty]) => {
@@ -328,6 +395,10 @@ function renderMealInner(day, mealName, title) {
           <button class="btn" data-action="submitQuickAdd" data-meal="${mealName}" style="width:100%;">Add to ${title}</button>
         </div>
       ` : ""}
+    </div>
+    <div style="margin-top:8px;">
+      <button class="btn secondary" data-action="toggleEditDefaults" style="width:100%;">${editDefaultsOpen ? "Done editing defaults" : "Edit planned defaults"}</button>
+      ${editDefaultsOpen ? renderMealDefaultsEditor(mealName) : ""}
     </div>`;
 }
 
@@ -459,15 +530,16 @@ function progressionNote(last, routine) {
   if (!last) return "No previous session yet — log your starting weight/reps.";
   const when = niceDate(last.dateKey);
   const w = formatKgLb(last.weight);
-  if (last.reps >= routine.repTarget.max) return `Last: ${w} × ${last.reps} (${when}) — hit the top of the rep range, try +${routine.weightStepKg} kg this session.`;
+  const step = `${toDisplayWeight(routine.weightStepKg)} ${state.weightUnit}`;
+  if (last.reps >= routine.repTarget.max) return `Last: ${w} × ${last.reps} (${when}) — hit the top of the rep range, try +${step} this session.`;
   if (last.reps < routine.repTarget.min) return `Last: ${w} × ${last.reps} (${when}) — aim for ${routine.repTarget.min}+ reps at this weight before adding more.`;
-  return `Last: ${w} × ${last.reps} (${when}) — add a rep or two, or +${routine.weightStepKg} kg if it felt easy.`;
+  return `Last: ${w} × ${last.reps} (${when}) — add a rep or two, or +${step} if it felt easy.`;
 }
 
 function coreFieldsFor(type) {
   if (type === "reps") return [{ field: "reps", placeholder: `${CORE_REP_TARGET.min}-${CORE_REP_TARGET.max}` }];
   if (type === "duration") return [{ field: "seconds", placeholder: `${CORE_DURATION_TARGET.min}-${CORE_DURATION_TARGET.max}` }];
-  return [{ field: "weight", placeholder: "kg" }, { field: "reps", placeholder: `${CORE_REP_TARGET.min}-${CORE_REP_TARGET.max}` }]; // weighted-reps
+  return [{ field: "weight", placeholder: state.weightUnit }, { field: "reps", placeholder: `${CORE_REP_TARGET.min}-${CORE_REP_TARGET.max}` }]; // weighted-reps
 }
 
 function coreTargetLabel(type) {
@@ -484,13 +556,24 @@ function renderCoreExerciseBlock(ex, exIdx) {
       ${ex.sets.map((s, sIdx) => `
         <div class="set-row-flex">
           <div class="set-num">${sIdx + 1}</div>
-          ${fields.map(f => `<input type="number" inputmode="decimal" placeholder="${f.placeholder}" data-action="setCoreField" data-ex="${exIdx}" data-set="${sIdx}" data-field="${f.field}" value="${s[f.field] ?? ""}">`).join("")}
+          ${fields.map(f => `<input type="number" inputmode="decimal" placeholder="${f.placeholder}" data-action="setCoreField" data-ex="${exIdx}" data-set="${sIdx}" data-field="${f.field}" value="${f.field === "weight" ? toDisplayWeight(s.weight) : (s[f.field] ?? "")}">`).join("")}
           <button class="remove-set" data-action="removeCoreSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
         </div>
       `).join("")}
       <button class="btn secondary" data-action="addCoreSet" data-ex="${exIdx}">+ Add set</button>
     </div>
   `;
+}
+
+function renderPlateCalc(weightKg) {
+  if (weightKg === "" || weightKg === null || weightKg === undefined || !Number(weightKg)) return "";
+  const displayWeight = toDisplayWeight(weightKg);
+  const result = plateBreakdown(displayWeight, state.weightUnit);
+  if (!result) return `<div class="plate-calc">Lighter than the empty bar (${BAR_WEIGHT[state.weightUnit]} ${state.weightUnit})</div>`;
+  const chips = result.plates.length
+    ? result.plates.map(p => `<span class="plate-chip">${p}</span>`).join("")
+    : `<span class="plate-calc-label">bar only</span>`;
+  return `<div class="plate-calc"><span class="plate-calc-label">Per side:</span> ${chips}</div>`;
 }
 
 function renderWorkoutBody(day) {
@@ -508,10 +591,11 @@ function renderWorkoutBody(day) {
         ${ex.sets.map((s, sIdx) => `
           <div class="set-row">
             <div class="set-num">${sIdx + 1}</div>
-            <input type="number" inputmode="decimal" placeholder="kg" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${s.weight ?? ""}">
+            <input type="number" inputmode="decimal" placeholder="${state.weightUnit}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${toDisplayWeight(s.weight)}">
             <input type="number" inputmode="numeric" placeholder="${routine.repTarget.min}-${routine.repTarget.max}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
             <button class="remove-set" data-action="removeSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
           </div>
+          ${ex.barbell ? `<div data-plate-for="${exIdx}-${sIdx}">${renderPlateCalc(s.weight)}</div>` : ""}
         `).join("")}
         <button class="btn secondary" data-action="addSet" data-ex="${exIdx}">+ Add set</button>
       </div>
@@ -615,9 +699,14 @@ function renderUpcomingSchedule(daysAhead) {
 function renderRoutineManager() {
   const routineBlocks = state.routines.map(routine => {
     const canDelete = state.routines.length > 1;
-    const exRows = routine.exercises.length ? routine.exercises.map((name, idx) => `
+    const exRows = routine.exercises.length ? routine.exercises.map((ex, idx) => `
       <div class="meal-item">
-        <div class="meal-item-label">${name}</div>
+        <div>
+          <div class="meal-item-label">${ex.name}</div>
+          <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-dim); margin-top:2px;">
+            <input type="checkbox" data-action="toggleRoutineExerciseBarbell" data-routine="${routine.id}" data-idx="${idx}" ${ex.barbell ? "checked" : ""} style="width:auto;"> Barbell (plate calculator)
+          </label>
+        </div>
         <div style="display:flex; gap:6px;">
           <button class="icon-btn" data-action="moveRoutineExercise" data-routine="${routine.id}" data-idx="${idx}" data-dir="-1" ${idx === 0 ? "disabled" : ""}>↑</button>
           <button class="icon-btn" data-action="moveRoutineExercise" data-routine="${routine.id}" data-idx="${idx}" data-dir="1" ${idx === routine.exercises.length - 1 ? "disabled" : ""}>↓</button>
@@ -641,12 +730,17 @@ function renderRoutineManager() {
           <div class="field"><label>Reps (min)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="repMin" value="${routine.repTarget.min}"></div>
           <div class="field"><label>Reps (max)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="repMax" value="${routine.repTarget.max}"></div>
         </div>
-        <div class="field"><label>Weight step (kg)</label><input type="number" inputmode="decimal" step="0.5" data-action="setRoutineField" data-routine="${routine.id}" data-field="weightStep" value="${routine.weightStepKg}"></div>
+        <div class="field"><label>Weight step (${state.weightUnit})</label><input type="number" inputmode="decimal" step="0.5" data-action="setRoutineField" data-routine="${routine.id}" data-field="weightStep" value="${toDisplayWeight(routine.weightStepKg)}"></div>
         <h3 style="margin-top:10px;">Exercises</h3>
         ${exRows}
-        <div class="add-item-row" style="display:flex; gap:8px;">
-          <input type="text" id="new-exercise-${routine.id}" placeholder="Add exercise…" style="flex:1;">
-          <button class="btn secondary" data-action="addRoutineExercise" data-routine="${routine.id}">Add</button>
+        <div class="add-item-row">
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="new-exercise-${routine.id}" placeholder="Add exercise…" style="flex:1;">
+            <button class="btn secondary" data-action="addRoutineExercise" data-routine="${routine.id}">Add</button>
+          </div>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--text-dim);">
+            <input type="checkbox" id="new-exercise-barbell-${routine.id}" style="width:auto;"> Barbell lift (adds plate calculator)
+          </label>
         </div>
         ${canDelete ? `<button class="btn secondary" data-action="deleteRoutine" data-routine="${routine.id}" style="width:100%; margin-top:10px;">Delete routine</button>` : ""}
       </div>
@@ -657,8 +751,14 @@ function renderRoutineManager() {
 
   return `
     <div class="card">
-      <h2>Workout routines</h2>
-      <div class="meal-item-macro" style="margin-bottom:10px;">Only <strong>Active</strong> routines rotate on resistance days — one routine repeats every time, two or more alternate by session (A/B/A/B…), not by weekday. Inactive routines sit ready to switch to later.</div>
+      <div class="row">
+        <h2 style="margin:0;">Workout routines</h2>
+        <div class="toggle-pill" style="width:auto;">
+          <button data-action="setWeightUnit" data-unit="kg" class="${state.weightUnit === "kg" ? "active" : ""}">kg</button>
+          <button data-action="setWeightUnit" data-unit="lb" class="${state.weightUnit === "lb" ? "active" : ""}">lb</button>
+        </div>
+      </div>
+      <div class="meal-item-macro" style="margin:8px 0 10px;">Only <strong>Active</strong> routines rotate on resistance days — one routine repeats every time, two or more alternate by session (A/B/A/B…), not by weekday. Inactive routines sit ready to switch to later.</div>
       ${routineBlocks}
       <div class="add-item-row" style="display:flex; gap:8px; margin-top:4px;">
         <input type="text" id="new-routine-name" placeholder="New routine name…" style="flex:1;">
@@ -691,7 +791,7 @@ function renderExerciseProgressionCard(name) {
 
 function renderResistanceProgression() {
   const currentExerciseNames = new Set();
-  state.routines.forEach(r => r.exercises.forEach(name => currentExerciseNames.add(name)));
+  state.routines.forEach(r => r.exercises.forEach(ex => currentExerciseNames.add(ex.name)));
 
   const loggedNames = new Set();
   for (const day of Object.values(state.days)) {
@@ -704,7 +804,7 @@ function renderResistanceProgression() {
   const routineSections = state.routines.map(routine => `
     <div class="card"><h3 style="margin:0;">${routine.name || "Routine"}</h3></div>
     ${routine.exercises.length
-      ? routine.exercises.map(renderExerciseProgressionCard).join("")
+      ? routine.exercises.map(ex => renderExerciseProgressionCard(ex.name)).join("")
       : `<div class="card"><div class="empty-state">No exercises in this routine yet — add some in Workout Routines above</div></div>`}
   `).join("");
 
@@ -985,17 +1085,20 @@ document.getElementById("view-root").addEventListener("click", e => {
     viewDate = addDays(viewDate, Number(el.dataset.delta));
     mealTabIndex = 0;
     quickAddOpen = false;
+    editDefaultsOpen = false;
     render(); return;
   }
   if (action === "jumpToday") {
     viewDate = formatDateKey(new Date());
     mealTabIndex = 0;
     quickAddOpen = false;
+    editDefaultsOpen = false;
     render(); return;
   }
   if (action === "setMealTab") {
     mealTabIndex = Number(el.dataset.idx);
     quickAddOpen = false;
+    editDefaultsOpen = false;
     render(); return;
   }
   if (action === "closeDay") {
@@ -1012,7 +1115,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     const mealName = el.dataset.meal;
     const meal = day.meals[mealName];
     const id = el.dataset.item;
-    const isTemplateItem = id in (MEAL_TEMPLATES[mealName] || {});
+    const isTemplateItem = id in (state.mealTemplates[mealName] || {});
     const next = (meal[id] || 0) + Number(el.dataset.delta);
     if (next <= 0) { if (isTemplateItem) meal[id] = 0; else delete meal[id]; }
     else meal[id] = next;
@@ -1020,16 +1123,39 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "mealLogPlanned") {
     const mealName = el.dataset.meal;
-    day.meals[mealName] = { ...day.meals[mealName], ...MEAL_TEMPLATES[mealName] };
+    day.meals[mealName] = { ...day.meals[mealName], ...state.mealTemplates[mealName] };
     saveState(); render(); return;
   }
   if (action === "toggleQuickAdd") {
     quickAddOpen = !quickAddOpen;
     render(); return;
   }
+  if (action === "toggleEditDefaults") {
+    editDefaultsOpen = !editDefaultsOpen;
+    render(); return;
+  }
+  if (action === "templateQty") {
+    const mealName = el.dataset.meal;
+    const id = el.dataset.item;
+    const template = state.mealTemplates[mealName];
+    const next = (template[id] || 0) + Number(el.dataset.delta);
+    if (next <= 0) delete template[id]; else template[id] = next;
+    saveState(); render(); return;
+  }
+  if (action === "addTemplateItem") {
+    const mealName = el.dataset.meal;
+    const select = document.getElementById("template-add-" + mealName);
+    const id = select.value;
+    if (id) { state.mealTemplates[mealName][id] = 1; saveState(); render(); }
+    return;
+  }
   if (action === "toggleScheduleEdit") {
     scheduleEditOpen = !scheduleEditOpen;
     render(); return;
+  }
+  if (action === "setWeightUnit") {
+    state.weightUnit = el.dataset.unit;
+    saveState(); render(); return;
   }
   if (action === "addRoutine") {
     const input = document.getElementById("new-routine-name");
@@ -1050,10 +1176,10 @@ document.getElementById("view-root").addEventListener("click", e => {
     const stamp = Date.now();
     state.routines.push(
       { id: "routine_sl_a_" + stamp, name: "StrongLifts A", active: false,
-        exercises: ["Squat", "Bench Press", "Barbell Row"],
+        exercises: [{ name: "Squat", barbell: true }, { name: "Bench Press", barbell: true }, { name: "Barbell Row", barbell: true }],
         setTarget: { min: 5, max: 5 }, repTarget: { min: 5, max: 5 }, weightStepKg: 2.5 },
       { id: "routine_sl_b_" + stamp, name: "StrongLifts B", active: false,
-        exercises: ["Squat", "Overhead Press", "Deadlift"],
+        exercises: [{ name: "Squat", barbell: true }, { name: "Overhead Press", barbell: true }, { name: "Deadlift", barbell: true }],
         setTarget: { min: 5, max: 5 }, repTarget: { min: 5, max: 5 }, weightStepKg: 2.5 }
     );
     saveState(); render(); return;
@@ -1073,9 +1199,10 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "addRoutineExercise") {
     const routine = state.routines.find(r => r.id === el.dataset.routine);
     const input = document.getElementById("new-exercise-" + el.dataset.routine);
+    const barbellBox = document.getElementById("new-exercise-barbell-" + el.dataset.routine);
     const name = input.value.trim();
     if (!name) return;
-    routine.exercises.push(name);
+    routine.exercises.push({ name, barbell: !!(barbellBox && barbellBox.checked) });
     saveState(); render(); return;
   }
   if (action === "removeRoutineExercise") {
@@ -1198,18 +1325,27 @@ document.getElementById("view-root").addEventListener("input", e => {
     else if (field === "setMax") routine.setTarget.max = Number(el.value) || 0;
     else if (field === "repMin") routine.repTarget.min = Number(el.value) || 0;
     else if (field === "repMax") routine.repTarget.max = Number(el.value) || 0;
-    else if (field === "weightStep") routine.weightStepKg = Number(el.value) || 0;
+    else if (field === "weightStep") routine.weightStepKg = toStorageWeight(el.value) || 0;
     saveState();
     return;
   }
   if (action === "setField") {
-    const ex = day.workout.exercises[Number(el.dataset.ex)];
-    ex.sets[Number(el.dataset.set)][el.dataset.field] = el.value === "" ? "" : Number(el.value);
-    saveState(); return;
+    const exIdx = Number(el.dataset.ex);
+    const setIdx = Number(el.dataset.set);
+    const ex = day.workout.exercises[exIdx];
+    const field = el.dataset.field;
+    ex.sets[setIdx][field] = field === "weight" ? toStorageWeight(el.value) : (el.value === "" ? "" : Number(el.value));
+    saveState();
+    if (field === "weight" && ex.barbell) {
+      const wrap = document.querySelector(`[data-plate-for="${exIdx}-${setIdx}"]`);
+      if (wrap) wrap.innerHTML = renderPlateCalc(ex.sets[setIdx].weight);
+    }
+    return;
   }
   if (action === "setCoreField") {
     const ex = day.workout.core[Number(el.dataset.ex)];
-    ex.sets[Number(el.dataset.set)][el.dataset.field] = el.value === "" ? "" : Number(el.value);
+    const field = el.dataset.field;
+    ex.sets[Number(el.dataset.set)][field] = field === "weight" ? toStorageWeight(el.value) : (el.value === "" ? "" : Number(el.value));
     saveState(); return;
   }
   if (action === "setRunField") { day.workout.run[el.dataset.field] = el.value === "" ? "" : Number(el.value); saveState(); return; }
@@ -1225,6 +1361,12 @@ document.getElementById("view-root").addEventListener("change", e => {
   if (action === "mealAdd") {
     const id = el.value;
     if (id) { day.meals[el.dataset.meal][id] = 1; saveState(); render(); }
+    return;
+  }
+  if (action === "toggleRoutineExerciseBarbell") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    routine.exercises[Number(el.dataset.idx)].barbell = el.checked;
+    saveState(); render();
     return;
   }
   if (action === "setScheduleDay") {
@@ -1271,6 +1413,7 @@ document.getElementById("view-root").addEventListener("touchend", e => {
   if (dx < 0) mealTabIndex = Math.min(MEAL_ORDER.length - 1, mealTabIndex + 1);
   else mealTabIndex = Math.max(0, mealTabIndex - 1);
   quickAddOpen = false;
+  editDefaultsOpen = false;
   render();
 });
 
