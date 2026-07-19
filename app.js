@@ -34,7 +34,11 @@ function loadState() {
       if (!parsed.routines.some(r => r.active)) parsed.routines[0].active = true;
       if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
-      for (const item of Object.values(parsed.customItems)) { if (item.fat === undefined) item.fat = 0; }
+      if (parsed.targets.carbs === undefined) parsed.targets.carbs = DEFAULT_TARGETS.carbs;
+      for (const item of Object.values(parsed.customItems)) {
+        if (item.fat === undefined) item.fat = 0;
+        if (item.carbs === undefined) item.carbs = 0;
+      }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
       parsed.checklistItems.forEach(item => { if (item.recurring === undefined) item.recurring = true; });
@@ -162,27 +166,54 @@ function round1(n) {
   return Math.round(n * 10) / 10;
 }
 
+function ringSVG(pct, color) {
+  const r = 24, c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const offset = c * (1 - clamped / 100);
+  return `<svg width="56" height="56" viewBox="0 0 56 56"><circle cx="28" cy="28" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="6"/><circle cx="28" cy="28" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}" transform="rotate(-90 28 28)"/></svg>`;
+}
+
+function workoutStatusLabel(day) {
+  const w = day.workout;
+  if (!w.type || w.type === "rest") return "Rest day";
+  if (w.type === "resistance") {
+    const done = w.exercises.filter(ex => ex.sets.length > 0).length;
+    return `${done}/${w.exercises.length} exercises`;
+  }
+  if (w.type === "run") {
+    const cardioDone = Number(w.run.miles) > 0 && Number(w.run.minutes) > 0;
+    const coreDoneCount = w.core.filter(ex => ex.sets.length > 0).length;
+    if (cardioDone && coreDoneCount === w.core.length) return "Done";
+    if (!cardioDone && coreDoneCount === 0) return "Not started";
+    return "In progress";
+  }
+  if (w.type === "boulder") return Number(w.boulder.minutes) > 0 ? "Done" : "Not started";
+  return "—";
+}
+
 function mealTotals(meal) {
-  let cal = 0, protein = 0, fat = 0;
+  let cal = 0, protein = 0, fat = 0, carbs = 0;
   for (const [id, qty] of Object.entries(meal)) {
     const item = itemDef(id);
     if (!item || !qty) continue;
     cal += item.cal * qty;
     protein += item.protein * qty;
     fat += (item.fat || 0) * qty;
+    carbs += (item.carbs || 0) * qty;
   }
-  return { cal, protein, fat };
+  return { cal, protein, fat, carbs };
 }
 
 function dayTotals(day) {
-  let cal = 0, protein = 0, fat = 0;
+  let cal = 0, protein = 0, fat = 0, carbs = 0;
   for (const mealName of Object.keys(day.meals)) {
     const t = mealTotals(day.meals[mealName]);
     cal += t.cal;
     protein += t.protein;
     fat += t.fat;
+    carbs += t.carbs;
   }
-  return { cal, protein, fat };
+  return { cal, protein, fat, carbs };
 }
 
 // ---------- rendering shell ----------
@@ -224,23 +255,6 @@ function activityLabel(type) {
   return { resistance: "Resistance", run: "Run + Core", boulder: "Bouldering", rest: "Rest" }[type] || "Not set";
 }
 
-function workoutCompletionPct(day) {
-  const w = day.workout;
-  if (!w.type || w.type === "rest") return 100;
-  if (w.type === "resistance") {
-    if (!w.exercises.length) return 0;
-    const done = w.exercises.filter(ex => ex.sets.length > 0).length;
-    return Math.round((done / w.exercises.length) * 100);
-  }
-  if (w.type === "run") {
-    const cardioPct = (Number(w.run.miles) > 0 && Number(w.run.minutes) > 0) ? 100 : 0;
-    const corePct = w.core.length ? (w.core.filter(ex => ex.sets.length > 0).length / w.core.length) * 100 : 0;
-    return Math.round((cardioPct + corePct) / 2);
-  }
-  if (w.type === "boulder") return Number(w.boulder.minutes) > 0 ? 100 : 0;
-  return 0;
-}
-
 const MEAL_ORDER = Object.keys(MEAL_TEMPLATES);
 const MEAL_TITLES = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", extra: "Extra / swaps" };
 const MEAL_TAB_LABELS = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", extra: "Extra" };
@@ -273,7 +287,7 @@ function renderMealInner(day, mealName, title) {
       <div class="meal-item">
         <div>
           <div class="meal-item-label">${item.label}</div>
-          <div class="meal-item-macro">${item.cal * qty} cal · ${item.protein * qty}g protein · ${round1((item.fat || 0) * qty)}g fat${planned ? ` · planned ${planned}` : ""}</div>
+          <div class="meal-item-macro">${item.cal * qty} cal · ${item.protein * qty}g protein · ${round1((item.carbs || 0) * qty)}g carbs · ${round1((item.fat || 0) * qty)}g fat${planned ? ` · planned ${planned}` : ""}</div>
         </div>
         <div class="stepper">
           <button data-action="mealQty" data-meal="${mealName}" data-item="${id}" data-delta="-1">−</button>
@@ -289,7 +303,7 @@ function renderMealInner(day, mealName, title) {
   const hasTemplate = Object.keys(template).length > 0;
 
   return `
-    <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g P · ${round1(totals.fat)}g F</span></div>
+    <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g P · ${round1(totals.carbs)}g C · ${round1(totals.fat)}g F</span></div>
     ${rows}
     <div class="add-item-row" style="display:flex; gap:8px;">
       <select data-action="mealAdd" data-meal="${mealName}" style="flex:1;">
@@ -303,9 +317,12 @@ function renderMealInner(day, mealName, title) {
       ${quickAddOpen ? `
         <div class="quick-add-form">
           <div class="field"><label>Name</label><input type="text" id="quickadd-name" placeholder="e.g. Family Mart onigiri"></div>
-          <div class="three-col">
+          <div class="two-col">
             <div class="field"><label>Calories</label><input type="number" inputmode="numeric" id="quickadd-cal" placeholder="cal"></div>
             <div class="field"><label>Protein (g)</label><input type="number" inputmode="numeric" id="quickadd-protein" placeholder="g"></div>
+          </div>
+          <div class="two-col">
+            <div class="field"><label>Carbs (g)</label><input type="number" inputmode="numeric" id="quickadd-carbs" placeholder="g"></div>
             <div class="field"><label>Fat (g)</label><input type="number" inputmode="numeric" id="quickadd-fat" placeholder="g"></div>
           </div>
           <button class="btn" data-action="submitQuickAdd" data-meal="${mealName}" style="width:100%;">Add to ${title}</button>
@@ -325,12 +342,13 @@ function renderToday(day) {
   const activityBadgeClass = day.workout.type || "rest";
 
   const fatTarget = state.targets.fat;
-  const workoutPct = workoutCompletionPct(day);
-  const calPct = Math.min(100, Math.round((totals.cal / calTarget) * 100));
-  const proteinPct = Math.min(100, Math.round((totals.protein / proteinTarget) * 100));
-  const fatPct = Math.min(100, Math.round((totals.fat / fatTarget) * 100));
-  const stepsPct = Math.min(100, Math.round(((day.steps || 0) / STEP_TARGET.max) * 100));
-  const overallPct = Math.round((workoutPct + calPct + proteinPct + fatPct + stepsPct) / 5);
+  const carbsTarget = state.targets.carbs;
+  const rings = [
+    { label: "cal", value: Math.round(totals.cal), target: calTarget, color: MACRO_RING_COLORS.cal, suffix: "" },
+    { label: "protein", value: Math.round(totals.protein), target: proteinTarget, color: MACRO_RING_COLORS.protein, suffix: "g" },
+    { label: "carbs", value: Math.round(totals.carbs), target: carbsTarget, color: MACRO_RING_COLORS.carbs, suffix: "g" },
+    { label: "fat", value: round1(totals.fat), target: fatTarget, color: MACRO_RING_COLORS.fat, suffix: "g" },
+  ];
 
   const isToday = viewDate === formatDateKey(new Date());
 
@@ -343,36 +361,21 @@ function renderToday(day) {
       </div>
       ${!isToday ? `<div class="row" style="margin-top:8px;"><button class="btn secondary" data-action="jumpToday" style="width:100%;">Jump to Today</button></div>` : ""}
       <div class="row" style="margin-top:12px;">
-        <h2 style="margin:0;">Today's progress</h2>
-        <span class="meal-item-macro">${overallPct}%${day.completed ? " · ✓ Complete" : ""}</span>
+        <h2 style="margin:0;">Nutrition</h2>
+        ${day.completed ? `<span class="meal-item-macro">✓ Complete</span>` : ""}
       </div>
-      <div class="day-progress-track"><div class="day-progress-fill" style="width:${overallPct}%"></div></div>
-      <div class="progress-trio">
-        <div class="mini-metric">
-          <div class="mini-label">Workout</div>
-          <div class="mini-track"><div class="mini-fill" style="width:${workoutPct}%"></div></div>
-          <div class="mini-pct">${workoutPct}%</div>
-        </div>
-        <div class="mini-metric">
-          <div class="mini-label">Calories</div>
-          <div class="mini-track"><div class="mini-fill" style="width:${calPct}%"></div></div>
-          <div class="mini-pct">${totals.cal} / ${calTarget}</div>
-        </div>
-        <div class="mini-metric">
-          <div class="mini-label">Protein</div>
-          <div class="mini-track"><div class="mini-fill" style="width:${proteinPct}%"></div></div>
-          <div class="mini-pct">${Math.round(totals.protein)} / ${proteinTarget}g</div>
-        </div>
-        <div class="mini-metric">
-          <div class="mini-label">Fat</div>
-          <div class="mini-track"><div class="mini-fill" style="width:${fatPct}%"></div></div>
-          <div class="mini-pct">${round1(totals.fat)} / ${fatTarget}g</div>
-        </div>
-        <div class="mini-metric">
-          <div class="mini-label">Steps</div>
-          <div class="mini-track"><div class="mini-fill" style="width:${stepsPct}%"></div></div>
-          <div class="mini-pct">${day.steps || 0} / ${STEP_TARGET.max}</div>
-        </div>
+      <div class="ring-row">
+        ${rings.map(r => `
+          <div class="ring-item">
+            ${ringSVG((r.value / r.target) * 100, r.color)}
+            <div class="ring-value">${r.value}/${r.target}${r.suffix}</div>
+            <div class="ring-label">${r.label}</div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="pill-row">
+        <div class="activity-chip">Workout — ${workoutStatusLabel(day)}</div>
+        <div class="activity-chip">${(day.steps || 0).toLocaleString()} steps</div>
       </div>
       <div class="row" style="margin-top:14px;">
         ${day.completed
@@ -423,7 +426,6 @@ function renderToday(day) {
         <label>From Apple Health</label>
         <input type="number" inputmode="numeric" placeholder="e.g. 8500" data-action="setSteps" value="${day.steps ?? ""}">
       </div>
-      <div class="water-track"><div class="water-fill" style="width:${stepsPct}%"></div></div>
       <div class="meal-item-macro" style="margin-top:6px;">target ${STEP_TARGET.min.toLocaleString()}-${STEP_TARGET.max.toLocaleString()} steps</div>
     </div>
 
@@ -954,7 +956,7 @@ function renderCheckin() {
     ${pendingBlock || `<div class="card"><h2>Check-in</h2><div class="empty-state">Next check-in at day ${nextCheckinDayNumber()}</div></div>`}
     <div class="card">
       <h2>Current targets</h2>
-      <div class="meal-item-macro">Rest day: ${state.targets.calRest} cal · Training day: ${state.targets.calTrain} cal · Protein: ${state.targets.protein}g · Fat: ${state.targets.fat}g</div>
+      <div class="meal-item-macro">Rest day: ${state.targets.calRest} cal · Training day: ${state.targets.calTrain} cal · Protein: ${state.targets.protein}g · Carbs: ${state.targets.carbs}g · Fat: ${state.targets.fat}g</div>
     </div>
     <div class="card">
       <h2>Check-in history</h2>
@@ -1094,10 +1096,11 @@ document.getElementById("view-root").addEventListener("click", e => {
     const name = document.getElementById("quickadd-name").value.trim();
     const cal = Number(document.getElementById("quickadd-cal").value) || 0;
     const protein = Number(document.getElementById("quickadd-protein").value) || 0;
+    const carbs = Number(document.getElementById("quickadd-carbs").value) || 0;
     const fat = Number(document.getElementById("quickadd-fat").value) || 0;
     if (!name) return;
     const id = "custom_food_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
-    state.customItems[id] = { label: name, cal, protein, fat };
+    state.customItems[id] = { label: name, cal, protein, carbs, fat };
     day.meals[mealName][id] = 1;
     quickAddOpen = false;
     saveState(); render(); return;
