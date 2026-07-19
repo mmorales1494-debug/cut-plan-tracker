@@ -15,8 +15,16 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (!parsed.todos) parsed.todos = [];
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
+      // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
+      parsed.checklistItems.forEach(item => { if (item.recurring === undefined) item.recurring = true; });
+      // migrate the old perpetual to-do list into the merged checklist as one-time items
+      if (parsed.todos && parsed.todos.length) {
+        for (const t of parsed.todos) {
+          parsed.checklistItems.push({ id: "todo_" + t.id, label: t.text, recurring: false });
+        }
+      }
+      delete parsed.todos;
       return parsed;
     } catch (e) { /* fall through to fresh state */ }
   }
@@ -25,7 +33,6 @@ function loadState() {
     targets: { ...DEFAULT_TARGETS },
     days: {},
     checkIns: [],
-    todos: [],
     checklistItems: SUPPLEMENTS.map(s => ({ ...s })),
   };
 }
@@ -140,7 +147,6 @@ function render() {
   else if (currentTab === "workouts") root.innerHTML = renderWorkouts();
   else if (currentTab === "progress") root.innerHTML = renderProgressShell();
   else if (currentTab === "checkin") root.innerHTML = renderCheckin();
-  else if (currentTab === "todo") root.innerHTML = renderTodo();
 
   if (currentTab === "progress") hydrateProgress();
 }
@@ -303,17 +309,25 @@ function renderToday(day) {
 
     <div class="card">
       <h2>Daily checklist</h2>
-      <div class="meal-item-macro" style="margin-bottom:8px;">Resets fresh every day — for recurring items like meds or supplements.</div>
-      ${state.checklistItems.map(s => `
+      <div class="meal-item-macro" style="margin-bottom:8px;">Daily items reset fresh every morning. One-time tasks stick around until you check them off, then they're gone for good.</div>
+      ${state.checklistItems.length ? state.checklistItems.map(s => {
+        const checkedNow = s.recurring ? !!day.supplements[s.id] : false;
+        const checkAction = s.recurring ? "toggleSupplement" : "completeOneTimeItem";
+        return `
         <div class="meal-item">
-          <button class="todo-check ${day.supplements[s.id] ? "checked" : ""}" data-action="toggleSupplement" data-id="${s.id}"></button>
-          <div class="todo-label">${s.label}</div>
+          <button class="todo-check ${checkedNow ? "checked" : ""}" data-action="${checkAction}" data-id="${s.id}"></button>
+          <div class="todo-label">${s.label}${s.recurring ? ` <span class="recurring-tag">↻ daily</span>` : ""}</div>
           <button class="remove-set" data-action="removeChecklistItem" data-id="${s.id}">✕</button>
+        </div>`;
+      }).join("") : `<div class="empty-state">Nothing here yet — add something below</div>`}
+      <div class="add-item-row" style="margin-top:8px;">
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="checklist-input" placeholder="Add an item…" style="flex:1;">
+          <button class="btn secondary" data-action="addChecklistItem">Add</button>
         </div>
-      `).join("")}
-      <div class="add-item-row" style="display:flex; gap:8px; margin-top:8px;">
-        <input type="text" id="checklist-input" placeholder="Add a recurring item…" style="flex:1;">
-        <button class="btn secondary" data-action="addChecklistItem">Add</button>
+        <label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:12px; color:var(--text-dim);">
+          <input type="checkbox" id="checklist-recurring-input" style="width:auto;"> Repeats daily (e.g. meds/supplements)
+        </label>
       </div>
     </div>
 
@@ -726,31 +740,6 @@ function renderCheckin() {
   `;
 }
 
-// ---------- To-Do tab (perpetual, not tied to any day) ----------
-
-function renderTodo() {
-  const items = state.todos.slice().reverse();
-  const rows = items.length ? items.map(t => `
-    <div class="meal-item">
-      <button class="todo-check" data-action="checkTodo" data-id="${t.id}"></button>
-      <div class="todo-label">${t.text}</div>
-    </div>
-  `).join("") : `<div class="empty-state">Nothing on your list — add something below</div>`;
-
-  return `
-    <div class="card">
-      <h2>To-Do</h2>
-      <div class="meal-item-macro" style="margin-bottom:10px;">Sticks around until you check it off, then it's gone. Not tied to a specific day.</div>
-      <div class="add-item-row" style="display:flex; gap:8px;">
-        <input type="text" id="todo-input" placeholder="Add a task…" style="flex:1;">
-        <button class="btn secondary" data-action="addTodo">Add</button>
-      </div>
-    </div>
-    <div class="card">
-      ${rows}
-    </div>
-  `;
-}
 
 // ---------- action dispatcher ----------
 
@@ -857,9 +846,8 @@ document.getElementById("view-root").addEventListener("click", e => {
     state.checklistItems = state.checklistItems.filter(s => s.id !== el.dataset.id);
     saveState(); render(); return;
   }
-  if (action === "addTodo") { addTodoFromInput(); return; }
-  if (action === "checkTodo") {
-    state.todos = state.todos.filter(t => String(t.id) !== el.dataset.id);
+  if (action === "completeOneTimeItem") {
+    state.checklistItems = state.checklistItems.filter(s => s.id !== el.dataset.id);
     saveState(); render(); return;
   }
   if (action === "exportData") { exportData(); return; }
@@ -929,10 +917,6 @@ document.getElementById("view-root").addEventListener("change", e => {
 });
 
 document.getElementById("view-root").addEventListener("keydown", e => {
-  if (e.key === "Enter" && e.target.id === "todo-input") {
-    e.preventDefault();
-    addTodoFromInput();
-  }
   if (e.key === "Enter" && e.target.id === "checklist-input") {
     e.preventDefault();
     addChecklistItemFromInput();
@@ -961,21 +945,14 @@ document.getElementById("view-root").addEventListener("touchend", e => {
   render();
 });
 
-function addTodoFromInput() {
-  const input = document.getElementById("todo-input");
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text) return;
-  state.todos.push({ id: Date.now() + Math.random(), text });
-  saveState(); render();
-}
-
 function addChecklistItemFromInput() {
   const input = document.getElementById("checklist-input");
+  const recurringBox = document.getElementById("checklist-recurring-input");
   if (!input) return;
   const text = input.value.trim();
   if (!text) return;
-  state.checklistItems.push({ id: "custom_" + Date.now() + "_" + Math.floor(Math.random() * 1000), label: text });
+  const recurring = !!(recurringBox && recurringBox.checked);
+  state.checklistItems.push({ id: "custom_" + Date.now() + "_" + Math.floor(Math.random() * 1000), label: text, recurring });
   saveState(); render();
 }
 

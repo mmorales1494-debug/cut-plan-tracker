@@ -32,10 +32,11 @@ const KG_TO_LB = 2.20462;
 const CORE_REP_TARGET = { min: 12, max: 20 };
 const CORE_DURATION_TARGET = { min: 30, max: 60 }; // seconds, for planks
 
-// Daily supplement/med checklist — resets fresh each day, separate from the perpetual to-do list.
+// Daily checklist seed items. recurring:true resets fresh every day (meds/supplements);
+// one-time items (added in-app) carry over unfinished and vanish for good once checked off.
 const SUPPLEMENTS = [
-  { id: "creatine", label: "Creatine (5g)" },
-  { id: "zyrtec", label: "Zyrtec" },
+  { id: "creatine", label: "Creatine (5g)", recurring: true },
+  { id: "zyrtec", label: "Zyrtec", recurring: true },
 ];
 
 // Daily step target — not in the original spec, added as general NEAT support for a cut.

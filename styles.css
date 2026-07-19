@@ -176,6 +176,7 @@ html, body {
   transform: rotate(45deg);
 }
 .todo-label { font-size: 14px; flex: 1; }
+.recurring-tag { font-size: 10px; color: var(--text-dim); font-weight: 600; }
 
 .stepper {
   display: flex;
