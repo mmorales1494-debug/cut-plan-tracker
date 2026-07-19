@@ -10,6 +10,17 @@ let viewDate = formatDateKey(new Date());
 
 // ---------- persistence ----------
 
+function defaultRoutine() {
+  return {
+    id: "routine_1",
+    name: "Full Body",
+    exercises: [...RESISTANCE_EXERCISES],
+    setTarget: { ...SET_TARGET },
+    repTarget: { ...REP_TARGET },
+    weightStepKg: WEIGHT_STEP_KG,
+  };
+}
+
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
@@ -17,6 +28,8 @@ function loadState() {
       const parsed = JSON.parse(raw);
       if (!parsed.customItems) parsed.customItems = {};
       if (!parsed.weeklySchedule) parsed.weeklySchedule = { ...WEEKLY_SCHEDULE };
+      if (!parsed.routines || !parsed.routines.length) parsed.routines = [defaultRoutine()];
+      if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
       for (const item of Object.values(parsed.customItems)) { if (item.fat === undefined) item.fat = 0; }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
@@ -40,6 +53,8 @@ function loadState() {
     checklistItems: SUPPLEMENTS.map(s => ({ ...s })),
     customItems: {},
     weeklySchedule: { ...WEEKLY_SCHEDULE },
+    routines: [defaultRoutine()],
+    nextRoutineIndex: 0,
   };
 }
 
@@ -88,6 +103,19 @@ function emptyMealsFromTemplate() {
   return meals;
 }
 
+function routineForDay(day) {
+  return state.routines.find(r => r.id === day.workout.routineId) ||
+    { name: "", setTarget: SET_TARGET, repTarget: REP_TARGET, weightStepKg: WEIGHT_STEP_KG };
+}
+
+function populateResistanceExercises(day) {
+  const idx = state.nextRoutineIndex % state.routines.length;
+  const routine = state.routines[idx];
+  day.workout.exercises = routine.exercises.map(name => ({ name, sets: [] }));
+  day.workout.routineId = routine.id;
+  state.nextRoutineIndex = (idx + 1) % state.routines.length;
+}
+
 function getOrCreateDay(dateKey) {
   if (!state.days[dateKey]) {
     const dow = parseKey(dateKey).getDay();
@@ -99,7 +127,8 @@ function getOrCreateDay(dateKey) {
       supplements: {},
       workout: {
         type: scheduled || null,
-        exercises: scheduled === "resistance" ? RESISTANCE_EXERCISES.map(name => ({ name, sets: [] })) : [],
+        exercises: [],
+        routineId: null,
         core: scheduled === "run" ? CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] })) : [],
         run: { miles: "", minutes: "" },
         boulder: { minutes: "" },
@@ -110,6 +139,7 @@ function getOrCreateDay(dateKey) {
       completed: false,
       steps: null,
     };
+    if (scheduled === "resistance") populateResistanceExercises(state.days[dateKey]);
     saveState();
   }
   return state.days[dateKey];
@@ -418,13 +448,13 @@ function lastSessionFor(name, beforeKey) {
   return rows.length ? rows[rows.length - 1] : null;
 }
 
-function progressionNote(last) {
+function progressionNote(last, routine) {
   if (!last) return "No previous session yet — log your starting weight/reps.";
   const when = niceDate(last.dateKey);
   const w = formatKgLb(last.weight);
-  if (last.reps >= REP_TARGET.max) return `Last: ${w} × ${last.reps} (${when}) — hit the top of the rep range, try +${WEIGHT_STEP_KG} kg this session.`;
-  if (last.reps < REP_TARGET.min) return `Last: ${w} × ${last.reps} (${when}) — aim for ${REP_TARGET.min}+ reps at this weight before adding more.`;
-  return `Last: ${w} × ${last.reps} (${when}) — add a rep or two, or +${WEIGHT_STEP_KG} kg if it felt easy.`;
+  if (last.reps >= routine.repTarget.max) return `Last: ${w} × ${last.reps} (${when}) — hit the top of the rep range, try +${routine.weightStepKg} kg this session.`;
+  if (last.reps < routine.repTarget.min) return `Last: ${w} × ${last.reps} (${when}) — aim for ${routine.repTarget.min}+ reps at this weight before adding more.`;
+  return `Last: ${w} × ${last.reps} (${when}) — add a rep or two, or +${routine.weightStepKg} kg if it felt easy.`;
 }
 
 function coreFieldsFor(type) {
@@ -459,18 +489,20 @@ function renderCoreExerciseBlock(ex, exIdx) {
 function renderWorkoutBody(day) {
   const w = day.workout;
   if (w.type === "resistance") {
-    return w.exercises.map((ex, exIdx) => {
+    const routine = routineForDay(day);
+    const routineHeader = routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong></div>` : "";
+    return routineHeader + w.exercises.map((ex, exIdx) => {
       const last = lastSessionFor(ex.name, viewDate);
       return `
       <div class="exercise-block">
         <h3>${ex.name}</h3>
-        <div class="meal-item-macro">Target: ${SET_TARGET.min}-${SET_TARGET.max} sets × ${REP_TARGET.min}-${REP_TARGET.max} reps</div>
-        <div class="meal-item-macro" style="margin-bottom:8px;">${progressionNote(last)}</div>
+        <div class="meal-item-macro">Target: ${routine.setTarget.min}-${routine.setTarget.max} sets × ${routine.repTarget.min}-${routine.repTarget.max} reps</div>
+        <div class="meal-item-macro" style="margin-bottom:8px;">${progressionNote(last, routine)}</div>
         ${ex.sets.map((s, sIdx) => `
           <div class="set-row">
             <div class="set-num">${sIdx + 1}</div>
             <input type="number" inputmode="decimal" placeholder="kg" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${s.weight ?? ""}">
-            <input type="number" inputmode="numeric" placeholder="${REP_TARGET.min}-${REP_TARGET.max}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
+            <input type="number" inputmode="numeric" placeholder="${routine.repTarget.min}-${routine.repTarget.max}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
             <button class="remove-set" data-action="removeSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
           </div>
         `).join("")}
@@ -573,25 +605,103 @@ function renderUpcomingSchedule(daysAhead) {
   `;
 }
 
-function renderWorkouts() {
-  const exerciseBlocks = RESISTANCE_EXERCISES.map(name => {
-    const rows = collectExerciseHistory(name);
-    const recent = rows.slice(-8).reverse();
-    const chart = rows.length > 1 ? lineChartSVG([rows.map(r => ({ x: r.dateKey, y: r.weight }))], ["#4fd1c5"]) : "";
+function renderRoutineManager() {
+  const routineBlocks = state.routines.map(routine => {
+    const canDelete = state.routines.length > 1;
+    const exRows = routine.exercises.length ? routine.exercises.map((name, idx) => `
+      <div class="meal-item">
+        <div class="meal-item-label">${name}</div>
+        <div style="display:flex; gap:6px;">
+          <button class="icon-btn" data-action="moveRoutineExercise" data-routine="${routine.id}" data-idx="${idx}" data-dir="-1" ${idx === 0 ? "disabled" : ""}>↑</button>
+          <button class="icon-btn" data-action="moveRoutineExercise" data-routine="${routine.id}" data-idx="${idx}" data-dir="1" ${idx === routine.exercises.length - 1 ? "disabled" : ""}>↓</button>
+          <button class="remove-set" data-action="removeRoutineExercise" data-routine="${routine.id}" data-idx="${idx}">✕</button>
+        </div>
+      </div>
+    `).join("") : `<div class="empty-state">No exercises yet — add one below</div>`;
+
     return `
-      <div class="card">
-        <h3>${name}</h3>
-        ${chart ? `<div class="chart-wrap">${chart}</div>` : ""}
-        ${recent.length ? `
-          <table class="hist-table">
-            <tr><th>Date</th><th>Top set</th><th>Sets</th></tr>
-            ${recent.map(r => `<tr><td>${niceDate(r.dateKey)}</td><td>${formatKgLb(r.weight)} × ${r.reps}</td><td>${r.sets}</td></tr>`).join("")}
-          </table>
-        ` : `<div class="empty-state">No sets logged yet</div>`}
+      <div class="exercise-block">
+        <div class="field"><label>Routine name</label><input type="text" data-action="setRoutineField" data-routine="${routine.id}" data-field="name" value="${routine.name}"></div>
+        <div class="two-col">
+          <div class="field"><label>Sets (min)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="setMin" value="${routine.setTarget.min}"></div>
+          <div class="field"><label>Sets (max)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="setMax" value="${routine.setTarget.max}"></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label>Reps (min)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="repMin" value="${routine.repTarget.min}"></div>
+          <div class="field"><label>Reps (max)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="repMax" value="${routine.repTarget.max}"></div>
+        </div>
+        <div class="field"><label>Weight step (kg)</label><input type="number" inputmode="decimal" step="0.5" data-action="setRoutineField" data-routine="${routine.id}" data-field="weightStep" value="${routine.weightStepKg}"></div>
+        <h3 style="margin-top:10px;">Exercises</h3>
+        ${exRows}
+        <div class="add-item-row" style="display:flex; gap:8px;">
+          <input type="text" id="new-exercise-${routine.id}" placeholder="Add exercise…" style="flex:1;">
+          <button class="btn secondary" data-action="addRoutineExercise" data-routine="${routine.id}">Add</button>
+        </div>
+        ${canDelete ? `<button class="btn secondary" data-action="deleteRoutine" data-routine="${routine.id}" style="width:100%; margin-top:10px;">Delete routine</button>` : ""}
       </div>
     `;
   }).join("");
 
+  return `
+    <div class="card">
+      <h2>Workout routines</h2>
+      <div class="meal-item-macro" style="margin-bottom:10px;">One routine = same workout every resistance day. Two or more rotate by session (A/B/A/B…), not by weekday — e.g. StrongLifts.</div>
+      ${routineBlocks}
+      <div class="add-item-row" style="display:flex; gap:8px; margin-top:4px;">
+        <input type="text" id="new-routine-name" placeholder="New routine name…" style="flex:1;">
+        <button class="btn secondary" data-action="addRoutine">+ Add routine</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderExerciseProgressionCard(name) {
+  const rows = collectExerciseHistory(name);
+  const recent = rows.slice(-8).reverse();
+  const chart = rows.length > 1 ? lineChartSVG([rows.map(r => ({ x: r.dateKey, y: r.weight }))], ["#4fd1c5"]) : "";
+  return `
+    <div class="card">
+      <h3>${name}</h3>
+      ${chart ? `<div class="chart-wrap">${chart}</div>` : ""}
+      ${recent.length ? `
+        <table class="hist-table">
+          <tr><th>Date</th><th>Top set</th><th>Sets</th></tr>
+          ${recent.map(r => `<tr><td>${niceDate(r.dateKey)}</td><td>${formatKgLb(r.weight)} × ${r.reps}</td><td>${r.sets}</td></tr>`).join("")}
+        </table>
+      ` : `<div class="empty-state">No sets logged yet</div>`}
+    </div>
+  `;
+}
+
+function renderResistanceProgression() {
+  const currentExerciseNames = new Set();
+  state.routines.forEach(r => r.exercises.forEach(name => currentExerciseNames.add(name)));
+
+  const loggedNames = new Set();
+  for (const day of Object.values(state.days)) {
+    if (day.workout.type !== "resistance") continue;
+    for (const ex of day.workout.exercises) {
+      if (ex.sets.length > 0) loggedNames.add(ex.name);
+    }
+  }
+
+  const routineSections = state.routines.map(routine => `
+    <div class="card"><h3 style="margin:0;">${routine.name || "Routine"}</h3></div>
+    ${routine.exercises.length
+      ? routine.exercises.map(renderExerciseProgressionCard).join("")
+      : `<div class="card"><div class="empty-state">No exercises in this routine yet — add some in Workout Routines above</div></div>`}
+  `).join("");
+
+  const otherNames = [...loggedNames].filter(name => !currentExerciseNames.has(name)).sort();
+  const otherSection = otherNames.length ? `
+    <div class="card"><h3 style="margin:0;">Other (from past routines)</h3></div>
+    ${otherNames.map(renderExerciseProgressionCard).join("")}
+  ` : "";
+
+  return routineSections + otherSection;
+}
+
+function renderWorkouts() {
   const cardioRows = Object.entries(state.days)
     .filter(([, d]) => d.workout.type === "run" || d.workout.type === "boulder")
     .sort(([a], [b]) => b.localeCompare(a))
@@ -614,8 +724,9 @@ function renderWorkouts() {
 
   return `
     ${renderUpcomingSchedule(14)}
+    ${renderRoutineManager()}
     <div class="card"><h2>Resistance progression</h2></div>
-    ${exerciseBlocks}
+    ${renderResistanceProgression()}
     <div class="card"><h2>Run / boulder log</h2>${cardioTable}</div>
   `;
 }
@@ -904,6 +1015,47 @@ document.getElementById("view-root").addEventListener("click", e => {
     scheduleEditOpen = !scheduleEditOpen;
     render(); return;
   }
+  if (action === "addRoutine") {
+    const input = document.getElementById("new-routine-name");
+    const name = input.value.trim();
+    if (!name) return;
+    state.routines.push({
+      id: "routine_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+      name,
+      exercises: [],
+      setTarget: { ...SET_TARGET },
+      repTarget: { ...REP_TARGET },
+      weightStepKg: WEIGHT_STEP_KG,
+    });
+    saveState(); render(); return;
+  }
+  if (action === "deleteRoutine") {
+    if (state.routines.length <= 1) return;
+    state.routines = state.routines.filter(r => r.id !== el.dataset.routine);
+    if (state.nextRoutineIndex >= state.routines.length) state.nextRoutineIndex = 0;
+    saveState(); render(); return;
+  }
+  if (action === "addRoutineExercise") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    const input = document.getElementById("new-exercise-" + el.dataset.routine);
+    const name = input.value.trim();
+    if (!name) return;
+    routine.exercises.push(name);
+    saveState(); render(); return;
+  }
+  if (action === "removeRoutineExercise") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    routine.exercises.splice(Number(el.dataset.idx), 1);
+    saveState(); render(); return;
+  }
+  if (action === "moveRoutineExercise") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    const idx = Number(el.dataset.idx);
+    const newIdx = idx + Number(el.dataset.dir);
+    if (newIdx < 0 || newIdx >= routine.exercises.length) return;
+    [routine.exercises[idx], routine.exercises[newIdx]] = [routine.exercises[newIdx], routine.exercises[idx]];
+    saveState(); render(); return;
+  }
   if (action === "submitQuickAdd") {
     const mealName = el.dataset.meal;
     const name = document.getElementById("quickadd-name").value.trim();
@@ -925,7 +1077,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     const type = el.dataset.type;
     day.workout.type = type;
     if (type === "resistance" && day.workout.exercises.length === 0) {
-      day.workout.exercises = RESISTANCE_EXERCISES.map(name => ({ name, sets: [] }));
+      populateResistanceExercises(day);
     }
     if (type === "run" && (!day.workout.core || day.workout.core.length === 0)) {
       day.workout.core = CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] }));
@@ -934,12 +1086,13 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "addSet") {
     const ex = day.workout.exercises[Number(el.dataset.ex)];
+    const routine = routineForDay(day);
     let suggestedWeight = "";
     if (ex.sets.length && ex.sets[ex.sets.length - 1].weight !== "") {
       suggestedWeight = ex.sets[ex.sets.length - 1].weight;
     } else {
       const last = lastSessionFor(ex.name, viewDate);
-      if (last) suggestedWeight = last.reps >= REP_TARGET.max ? last.weight + WEIGHT_STEP_KG : last.weight;
+      if (last) suggestedWeight = last.reps >= routine.repTarget.max ? last.weight + routine.weightStepKg : last.weight;
     }
     ex.sets.push({ weight: suggestedWeight, reps: "" });
     saveState(); render(); return;
@@ -1001,6 +1154,18 @@ document.getElementById("view-root").addEventListener("input", e => {
   if (action === "setSteps") { day.steps = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setWaist") { day.waist = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setNotes") { day.notes = el.value; saveState(); return; }
+  if (action === "setRoutineField") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    const field = el.dataset.field;
+    if (field === "name") routine.name = el.value;
+    else if (field === "setMin") routine.setTarget.min = Number(el.value) || 0;
+    else if (field === "setMax") routine.setTarget.max = Number(el.value) || 0;
+    else if (field === "repMin") routine.repTarget.min = Number(el.value) || 0;
+    else if (field === "repMax") routine.repTarget.max = Number(el.value) || 0;
+    else if (field === "weightStep") routine.weightStepKg = Number(el.value) || 0;
+    saveState();
+    return;
+  }
   if (action === "setField") {
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     ex.sets[Number(el.dataset.set)][el.dataset.field] = el.value === "" ? "" : Number(el.value);

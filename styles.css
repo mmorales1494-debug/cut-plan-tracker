@@ -368,6 +368,17 @@ button.btn:disabled {
   font-size: 13px;
 }
 
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.icon-btn:disabled { opacity: 0.35; }
+
 .field {
   margin-bottom: 10px;
 }
