@@ -127,4 +127,11 @@ const CORE_EXERCISES = [
   { name: "Weighted Dumbbell Twist", type: "weighted-reps" },
 ];
 
-const CHECKIN_INTERVAL_DAYS = 14;
+// Named hangboard protocols — load their config into the shared timer, all fields
+// stay adjustable afterward. sets/reps/work/rest/restBetweenSets are all in seconds
+// except sets/reps (counts).
+const HANGBOARD_PRESETS = [
+  { name: "Max Hangs", description: "Heavy near-max hangs, long rest — builds max finger strength.", sets: 4, reps: 1, work: 10, rest: 5, restBetweenSets: 180 },
+  { name: "Repeaters (7:3)", description: "Classic 7s on / 3s off endurance protocol.", sets: 4, reps: 6, work: 7, rest: 3, restBetweenSets: 180 },
+  { name: "Density Hangs", description: "Longer submaximal hangs for aerobic capacity.", sets: 3, reps: 6, work: 20, rest: 10, restBetweenSets: 120 },
+];

@@ -235,7 +235,7 @@ function render() {
   if (currentTab === "today") root.innerHTML = renderToday(day);
   else if (currentTab === "workouts") root.innerHTML = renderWorkouts();
   else if (currentTab === "progress") root.innerHTML = renderProgressShell();
-  else if (currentTab === "checkin") root.innerHTML = renderCheckin();
+  else if (currentTab === "climbing") root.innerHTML = renderClimbing();
 
   if (currentTab === "progress") hydrateProgress();
 }
@@ -974,97 +974,205 @@ async function getAllPhotos() {
   });
 }
 
-// ---------- Check-in tab ----------
+// ---------- Climbing / hangboard timer ----------
 
-function allWeightEntriesSorted() {
-  return Object.entries(state.days)
-    .filter(([, d]) => d.weight != null && d.weight !== "")
-    .map(([k, d]) => ({ date: k, weight: Number(d.weight) }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+let climbingMode = "simple"; // "simple" | "presets"
+let timerConfig = { sets: 1, reps: 8, work: 10, rest: 5, restBetweenSets: 60 };
+let timerPhase = null; // null (idle) | "work" | "rest" | "restBetweenSets" | "done"
+let timerCurrentSet = 1;
+let timerCurrentRep = 1;
+let timerRemaining = 0;
+let timerIntervalId = null;
+let wakeLockSentinel = null;
+let audioCtx = null;
+
+function formatMMSS(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function computeRollingTrendAsOf(cutoffKey) {
-  const entries = allWeightEntriesSorted().filter(e => e.date <= cutoffKey);
-  if (entries.length < 8) return null;
-  const last7 = entries.slice(-7);
-  const prev7 = entries.slice(-14, -7);
-  if (prev7.length < 1) return null;
-  const avg = arr => arr.reduce((s, e) => s + e.weight, 0) / arr.length;
-  const currentAvg = avg(last7);
-  const prevAvg = avg(prev7);
-  const weeklyRateLbs = prevAvg - currentAvg; // positive = losing
-  return { currentAvg, prevAvg, weeklyRateLbs };
+function computeTotalSeconds(cfg) {
+  const perSet = cfg.reps * cfg.work + Math.max(0, cfg.reps - 1) * cfg.rest;
+  return cfg.sets * perSet + Math.max(0, cfg.sets - 1) * cfg.restBetweenSets;
 }
 
-function nextCheckinDayNumber() {
-  const done = new Set(state.checkIns.map(c => c.dayNumber));
-  let n = CHECKIN_INTERVAL_DAYS;
-  while (done.has(n)) n += CHECKIN_INTERVAL_DAYS;
-  return n;
+function beep(freq, duration) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration / 1000);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration / 1000);
+  } catch (e) { /* Web Audio unavailable — fail silently */ }
 }
 
-function pendingCheckinDayNumber() {
-  const today = dayNumberFor(formatDateKey(new Date()));
-  const next = nextCheckinDayNumber();
-  return next <= today ? next : null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) wakeLockSentinel = await navigator.wakeLock.request("screen");
+  } catch (e) { /* not supported / denied — fail silently */ }
 }
 
-function suggestionFor(trend) {
-  if (!trend) return { kind: "insufficient", text: "Need at least 2 weeks of daily weigh-ins to compute a trend." };
-  const rate = trend.weeklyRateLbs;
-  const last2 = state.checkIns.slice(-1)[0];
-  if (rate > 1.5) {
-    return { kind: "increase", delta: 175, text: `Losing ~${rate.toFixed(1)} lb/week — faster than the 1-1.5 lb/week target. Suggest increasing calories by ~150-200/day.` };
+function releaseWakeLock() {
+  if (wakeLockSentinel) {
+    wakeLockSentinel.release().catch(() => {});
+    wakeLockSentinel = null;
   }
-  if (rate < 0.5 && last2 && last2.weeklyRateLbs < 0.5) {
-    return { kind: "decrease", delta: -175, text: `Losing ~${rate.toFixed(1)} lb/week for two check-ins in a row — slower than target. Suggest decreasing calories by ~150-200/day, or add activity.` };
-  }
-  if (rate < 0.5) {
-    return { kind: "hold", delta: 0, text: `Losing ~${rate.toFixed(1)} lb/week — a bit slow, but only one check-in so far. Hold steady and re-check in 2 weeks.` };
-  }
-  return { kind: "hold", delta: 0, text: `Losing ~${rate.toFixed(1)} lb/week — right in the 1-1.5 lb/week target range. Hold current targets.` };
 }
 
-function renderCheckin() {
-  const pendingDay = pendingCheckinDayNumber();
-  let pendingBlock = "";
-  if (pendingDay) {
-    const cutoffKey = addDays(PLAN_START, pendingDay - 1);
-    const trend = computeRollingTrendAsOf(cutoffKey);
-    const s = suggestionFor(trend);
-    const baseline = allWeightEntriesSorted()[0];
-    const latest = allWeightEntriesSorted().slice(-1)[0];
-    const totalChange = baseline && latest ? (baseline.weight - latest.weight) : null;
-    pendingBlock = `
-      <div class="card">
-        <h2>Check-in due — Day ${pendingDay}</h2>
-        <div class="checkin-suggestion ${s.kind}">${s.text}</div>
-        ${totalChange != null && Math.abs(totalChange) > 5 ? `<div class="checkin-suggestion hold">Total change from baseline is ${totalChange.toFixed(1)} lb — consider re-estimating maintenance calories.</div>` : ""}
-        <div class="row">
-          <button class="btn secondary" data-action="dismissCheckin" data-day="${pendingDay}">Skip this time</button>
-          <button class="btn" data-action="acceptCheckin" data-day="${pendingDay}" data-delta="${s.delta}" ${s.kind === "insufficient" ? "disabled" : ""}>Apply & log</button>
+function startTimer() {
+  if (timerPhase === null || timerPhase === "done") {
+    timerCurrentSet = 1;
+    timerCurrentRep = 1;
+    timerPhase = "work";
+    timerRemaining = timerConfig.work;
+    beep(880, 150);
+  }
+  requestWakeLock();
+  if (timerIntervalId) clearInterval(timerIntervalId);
+  timerIntervalId = setInterval(tickTimer, 1000);
+  render();
+}
+
+function pauseTimer() {
+  if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+  releaseWakeLock();
+  render();
+}
+
+function resetTimer() {
+  if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+  releaseWakeLock();
+  timerPhase = null;
+  timerCurrentSet = 1;
+  timerCurrentRep = 1;
+  timerRemaining = 0;
+  render();
+}
+
+function finishTimer() {
+  clearInterval(timerIntervalId);
+  timerIntervalId = null;
+  releaseWakeLock();
+  timerPhase = "done";
+  beep(660, 150);
+  setTimeout(() => beep(660, 150), 200);
+  setTimeout(() => beep(880, 250), 400);
+  if (currentTab === "climbing") render();
+}
+
+function tickTimer() {
+  timerRemaining -= 1;
+  if (timerRemaining > 0) {
+    if (currentTab === "climbing") render();
+    return;
+  }
+
+  if (timerPhase === "work") {
+    if (timerCurrentRep < timerConfig.reps) {
+      timerPhase = "rest";
+      timerRemaining = timerConfig.rest;
+      beep(440, 150);
+    } else if (timerCurrentSet < timerConfig.sets) {
+      timerPhase = "restBetweenSets";
+      timerRemaining = timerConfig.restBetweenSets;
+      beep(440, 150);
+    } else {
+      finishTimer();
+      return;
+    }
+  } else if (timerPhase === "rest") {
+    timerCurrentRep += 1;
+    timerPhase = "work";
+    timerRemaining = timerConfig.work;
+    beep(880, 150);
+  } else if (timerPhase === "restBetweenSets") {
+    timerCurrentSet += 1;
+    timerCurrentRep = 1;
+    timerPhase = "work";
+    timerRemaining = timerConfig.work;
+    beep(880, 150);
+  }
+  if (currentTab === "climbing") render();
+}
+
+function renderClimbing() {
+  const isIdle = timerPhase === null;
+  const isDone = timerPhase === "done";
+  const showConfig = isIdle;
+  const totalSeconds = computeTotalSeconds(timerConfig);
+  const showSetsFields = climbingMode === "presets";
+
+  const modeSwitcher = showConfig ? `
+    <div class="toggle-pill">
+      <button data-action="setClimbingMode" data-mode="simple" class="${climbingMode === "simple" ? "active" : ""}">Simple Timer</button>
+      <button data-action="setClimbingMode" data-mode="presets" class="${climbingMode === "presets" ? "active" : ""}">Preset Protocols</button>
+    </div>
+  ` : "";
+
+  const presetList = (showConfig && climbingMode === "presets") ? `
+    <div style="margin-top:12px;">
+      ${HANGBOARD_PRESETS.map((p, i) => `
+        <div class="meal-item">
+          <div>
+            <div class="meal-item-label">${p.name}</div>
+            <div class="meal-item-macro">${p.description}</div>
+            <div class="meal-item-macro">${p.sets} sets × ${p.reps} reps · ${p.work}s work / ${p.rest}s rest</div>
+          </div>
+          <button class="btn secondary" data-action="selectPreset" data-idx="${i}">Load</button>
         </div>
-      </div>
-    `;
-  }
+      `).join("")}
+    </div>
+  ` : "";
 
-  const history = state.checkIns.slice().reverse().map(c => `
-    <tr><td>Day ${c.dayNumber}</td><td>${c.weeklyRateLbs != null ? c.weeklyRateLbs.toFixed(1) + " lb/wk" : "—"}</td><td>${c.appliedDeltaCal > 0 ? "+" : ""}${c.appliedDeltaCal} cal</td></tr>
-  `).join("");
+  const sliderRow = (label, field, min, max, step, value, unit) => `
+    <div class="field">
+      <label>${label}: <span id="timer-val-${field}">${value}</span>${unit || ""}</label>
+      <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-action="setTimerField" data-field="${field}">
+    </div>
+  `;
+
+  const configPanel = showConfig ? `
+    <div style="margin-top:14px;">
+      ${showSetsFields ? sliderRow("Sets", "sets", 1, 10, 1, timerConfig.sets, "") : ""}
+      ${sliderRow("Reps", "reps", 1, 30, 1, timerConfig.reps, "")}
+      ${sliderRow("Work time", "work", 1, 60, 1, timerConfig.work, "s")}
+      ${sliderRow("Rest time", "rest", 0, 60, 1, timerConfig.rest, "s")}
+      ${showSetsFields ? sliderRow("Rest between sets", "restBetweenSets", 0, 300, 5, timerConfig.restBetweenSets, "s") : ""}
+    </div>
+  ` : "";
+
+  const phaseLabel = { work: "Work", rest: "Rest", restBetweenSets: "Rest (between sets)", done: "Done!" }[timerPhase] || "Ready";
+  const displayTime = isIdle ? formatMMSS(totalSeconds) : isDone ? "Done!" : formatMMSS(timerRemaining);
+  const phaseClass = timerPhase === "work" ? "work" : (timerPhase === "rest" || timerPhase === "restBetweenSets") ? "rest" : timerPhase === "done" ? "done" : "";
 
   return `
-    ${pendingBlock || `<div class="card"><h2>Check-in</h2><div class="empty-state">Next check-in at day ${nextCheckinDayNumber()}</div></div>`}
     <div class="card">
-      <h2>Current targets</h2>
-      <div class="meal-item-macro">Rest day: ${state.targets.calRest} cal · Training day: ${state.targets.calTrain} cal · Protein: ${state.targets.protein}g · Carbs: ${state.targets.carbs}g · Fat: ${state.targets.fat}g</div>
-    </div>
-    <div class="card">
-      <h2>Check-in history</h2>
-      ${history ? `<table class="hist-table"><tr><th>Checkpoint</th><th>Rate</th><th>Adjustment</th></tr>${history}</table>` : `<div class="empty-state">No check-ins yet</div>`}
+      <h2>Hangboard Timer</h2>
+      ${modeSwitcher}
+      ${presetList}
+      ${configPanel}
+      <div class="timer-display ${phaseClass}">
+        <div class="timer-phase">${isIdle ? "Total time" : phaseLabel}</div>
+        <div class="timer-clock" id="timer-clock">${displayTime}</div>
+        ${!isIdle && !isDone ? `<div class="timer-progress">Set ${timerCurrentSet} of ${timerConfig.sets} · Rep ${timerCurrentRep} of ${timerConfig.reps}</div>` : ""}
+      </div>
+      <div class="row" style="margin-top:14px; gap:8px;">
+        ${isIdle || isDone
+          ? `<button class="btn" data-action="startTimer" style="width:100%;">Start</button>`
+          : timerIntervalId
+            ? `<button class="btn secondary" data-action="pauseTimer" style="flex:1;">Pause</button><button class="btn secondary" data-action="resetTimer" style="flex:1;">Reset</button>`
+            : `<button class="btn" data-action="startTimer" style="flex:1;">Resume</button><button class="btn secondary" data-action="resetTimer" style="flex:1;">Reset</button>`}
+      </div>
     </div>
   `;
 }
-
 
 // ---------- action dispatcher ----------
 
@@ -1153,6 +1261,19 @@ document.getElementById("view-root").addEventListener("click", e => {
     scheduleEditOpen = !scheduleEditOpen;
     render(); return;
   }
+  if (action === "setClimbingMode") {
+    climbingMode = el.dataset.mode;
+    if (climbingMode === "simple") timerConfig.sets = 1;
+    render(); return;
+  }
+  if (action === "selectPreset") {
+    const p = HANGBOARD_PRESETS[Number(el.dataset.idx)];
+    timerConfig = { sets: p.sets, reps: p.reps, work: p.work, rest: p.rest, restBetweenSets: p.restBetweenSets };
+    render(); return;
+  }
+  if (action === "startTimer") { startTimer(); return; }
+  if (action === "pauseTimer") { pauseTimer(); return; }
+  if (action === "resetTimer") { resetTimer(); return; }
   if (action === "setWeightUnit") {
     state.weightUnit = el.dataset.unit;
     saveState(); render(); return;
@@ -1289,22 +1410,6 @@ document.getElementById("view-root").addEventListener("click", e => {
     saveState(); render(); return;
   }
   if (action === "exportData") { exportData(); return; }
-  if (action === "acceptCheckin" || action === "dismissCheckin") {
-    const dayNum = Number(el.dataset.day);
-    const cutoffKey = addDays(PLAN_START, dayNum - 1);
-    const trend = computeRollingTrendAsOf(cutoffKey);
-    const delta = action === "acceptCheckin" ? Number(el.dataset.delta) : 0;
-    if (action === "acceptCheckin" && delta) {
-      state.targets.calRest += delta;
-      state.targets.calTrain += delta;
-    }
-    state.checkIns.push({
-      dayNumber: dayNum,
-      weeklyRateLbs: trend ? trend.weeklyRateLbs : null,
-      appliedDeltaCal: delta,
-    });
-    saveState(); render(); return;
-  }
 });
 
 document.getElementById("view-root").addEventListener("input", e => {
@@ -1317,6 +1422,15 @@ document.getElementById("view-root").addEventListener("input", e => {
   if (action === "setSteps") { day.steps = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setWaist") { day.waist = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setNotes") { day.notes = el.value; saveState(); return; }
+  if (action === "setTimerField") {
+    const field = el.dataset.field;
+    timerConfig[field] = Number(el.value);
+    const valSpan = document.getElementById("timer-val-" + field);
+    if (valSpan) valSpan.textContent = el.value;
+    const clockEl = document.getElementById("timer-clock");
+    if (clockEl && timerPhase === null) clockEl.textContent = formatMMSS(computeTotalSeconds(timerConfig));
+    return;
+  }
   if (action === "setRoutineField") {
     const routine = state.routines.find(r => r.id === el.dataset.routine);
     const field = el.dataset.field;
