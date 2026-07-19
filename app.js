@@ -16,6 +16,8 @@ function loadState() {
     try {
       const parsed = JSON.parse(raw);
       if (!parsed.customItems) parsed.customItems = {};
+      if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
+      for (const item of Object.values(parsed.customItems)) { if (item.fat === undefined) item.fat = 0; }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
       parsed.checklistItems.forEach(item => { if (item.recurring === undefined) item.recurring = true; });
@@ -119,25 +121,31 @@ function itemDef(id) {
   return ITEM_CATALOG[id] || state.customItems[id];
 }
 
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+
 function mealTotals(meal) {
-  let cal = 0, protein = 0;
+  let cal = 0, protein = 0, fat = 0;
   for (const [id, qty] of Object.entries(meal)) {
     const item = itemDef(id);
     if (!item || !qty) continue;
     cal += item.cal * qty;
     protein += item.protein * qty;
+    fat += (item.fat || 0) * qty;
   }
-  return { cal, protein };
+  return { cal, protein, fat };
 }
 
 function dayTotals(day) {
-  let cal = 0, protein = 0;
+  let cal = 0, protein = 0, fat = 0;
   for (const mealName of Object.keys(day.meals)) {
     const t = mealTotals(day.meals[mealName]);
     cal += t.cal;
     protein += t.protein;
+    fat += t.fat;
   }
-  return { cal, protein };
+  return { cal, protein, fat };
 }
 
 // ---------- rendering shell ----------
@@ -229,7 +237,7 @@ function renderMealInner(day, mealName, title) {
       <div class="meal-item">
         <div>
           <div class="meal-item-label">${item.label}</div>
-          <div class="meal-item-macro">${item.cal * qty} cal · ${item.protein * qty}g protein${planned ? ` · planned ${planned}` : ""}</div>
+          <div class="meal-item-macro">${item.cal * qty} cal · ${item.protein * qty}g protein · ${round1((item.fat || 0) * qty)}g fat${planned ? ` · planned ${planned}` : ""}</div>
         </div>
         <div class="stepper">
           <button data-action="mealQty" data-meal="${mealName}" data-item="${id}" data-delta="-1">−</button>
@@ -245,7 +253,7 @@ function renderMealInner(day, mealName, title) {
   const hasTemplate = Object.keys(template).length > 0;
 
   return `
-    <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g</span></div>
+    <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g P · ${round1(totals.fat)}g F</span></div>
     ${rows}
     <div class="add-item-row" style="display:flex; gap:8px;">
       <select data-action="mealAdd" data-meal="${mealName}" style="flex:1;">
@@ -259,9 +267,10 @@ function renderMealInner(day, mealName, title) {
       ${quickAddOpen ? `
         <div class="quick-add-form">
           <div class="field"><label>Name</label><input type="text" id="quickadd-name" placeholder="e.g. Family Mart onigiri"></div>
-          <div class="two-col">
+          <div class="three-col">
             <div class="field"><label>Calories</label><input type="number" inputmode="numeric" id="quickadd-cal" placeholder="cal"></div>
             <div class="field"><label>Protein (g)</label><input type="number" inputmode="numeric" id="quickadd-protein" placeholder="g"></div>
+            <div class="field"><label>Fat (g)</label><input type="number" inputmode="numeric" id="quickadd-fat" placeholder="g"></div>
           </div>
           <button class="btn" data-action="submitQuickAdd" data-meal="${mealName}" style="width:100%;">Add to ${title}</button>
         </div>
@@ -279,11 +288,13 @@ function renderToday(day) {
 
   const activityBadgeClass = day.workout.type || "rest";
 
+  const fatTarget = state.targets.fat;
   const workoutPct = workoutCompletionPct(day);
   const calPct = Math.min(100, Math.round((totals.cal / calTarget) * 100));
   const proteinPct = Math.min(100, Math.round((totals.protein / proteinTarget) * 100));
+  const fatPct = Math.min(100, Math.round((totals.fat / fatTarget) * 100));
   const stepsPct = Math.min(100, Math.round(((day.steps || 0) / STEP_TARGET.max) * 100));
-  const overallPct = Math.round((workoutPct + calPct + proteinPct + stepsPct) / 4);
+  const overallPct = Math.round((workoutPct + calPct + proteinPct + fatPct + stepsPct) / 5);
 
   const isToday = viewDate === formatDateKey(new Date());
 
@@ -315,6 +326,11 @@ function renderToday(day) {
           <div class="mini-label">Protein</div>
           <div class="mini-track"><div class="mini-fill" style="width:${proteinPct}%"></div></div>
           <div class="mini-pct">${Math.round(totals.protein)} / ${proteinTarget}g</div>
+        </div>
+        <div class="mini-metric">
+          <div class="mini-label">Fat</div>
+          <div class="mini-track"><div class="mini-fill" style="width:${fatPct}%"></div></div>
+          <div class="mini-pct">${round1(totals.fat)} / ${fatTarget}g</div>
         </div>
         <div class="mini-metric">
           <div class="mini-label">Steps</div>
@@ -779,7 +795,7 @@ function renderCheckin() {
     ${pendingBlock || `<div class="card"><h2>Check-in</h2><div class="empty-state">Next check-in at day ${nextCheckinDayNumber()}</div></div>`}
     <div class="card">
       <h2>Current targets</h2>
-      <div class="meal-item-macro">Rest day: ${state.targets.calRest} cal · Training day: ${state.targets.calTrain} cal · Protein: ${state.targets.protein}g</div>
+      <div class="meal-item-macro">Rest day: ${state.targets.calRest} cal · Training day: ${state.targets.calTrain} cal · Protein: ${state.targets.protein}g · Fat: ${state.targets.fat}g</div>
     </div>
     <div class="card">
       <h2>Check-in history</h2>
@@ -855,9 +871,10 @@ document.getElementById("view-root").addEventListener("click", e => {
     const name = document.getElementById("quickadd-name").value.trim();
     const cal = Number(document.getElementById("quickadd-cal").value) || 0;
     const protein = Number(document.getElementById("quickadd-protein").value) || 0;
+    const fat = Number(document.getElementById("quickadd-fat").value) || 0;
     if (!name) return;
     const id = "custom_food_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
-    state.customItems[id] = { label: name, cal, protein };
+    state.customItems[id] = { label: name, cal, protein, fat };
     day.meals[mealName][id] = 1;
     quickAddOpen = false;
     saveState(); render(); return;

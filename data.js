@@ -8,6 +8,7 @@ const DEFAULT_TARGETS = {
   calRest: 1900,
   calTrain: 2100,
   protein: 170,
+  fat: 62,
   waterBottlesMin: 2,
   waterBottlesMax: 2,
 };
@@ -43,21 +44,22 @@ const SUPPLEMENTS = [
 // recovery cost of more structured cardio, on top of the existing run/boulder/resistance days.
 const STEP_TARGET = { min: 8000, max: 10000 };
 
-// Item catalog: per-unit calories/protein. Meal totals recompute live from qty * unit values.
+// Item catalog: per-unit calories/protein/fat. Meal totals recompute live from qty * unit values.
 const ITEM_CATALOG = {
-  egg:               { label: "Egg (hard-cooked)",      cal: 70,  protein: 6 },
-  rice_scoop:        { label: "Rice (scoop)",            cal: 220, protein: 4 },
-  watermelon_juice:  { label: "Watermelon juice",        cal: 120, protein: 1 },
-  fruit:             { label: "Fruit (piece)",           cal: 90,  protein: 1 },
-  espresso:          { label: "Espresso",                cal: 5,   protein: 1 },
-  whey_scoop:        { label: "Whey protein (scoop)",    cal: 120, protein: 24 },
-  pb2_scoop:         { label: "PB2 Pro (scoop)",         cal: 65,  protein: 13 },
-  redbull_sf:        { label: "Sugar-free energy drink", cal: 10,  protein: 0 },
-  greens:            { label: "Greens",                  cal: 20,  protein: 2 },
-  tuna_spicy_scoop:  { label: "Spicy tuna (scoop)",       cal: 45,  protein: 9 },
-  tuna_raw_scoop:    { label: "Raw tuna (scoop)",         cal: 40,  protein: 10 },
-  boiled_egg:        { label: "Boiled egg (store)",       cal: 70,  protein: 6 },
-  tofu_pack:         { label: "Tofu pack (store)",        cal: 80,  protein: 8 },
+  egg:               { label: "Egg (hard-cooked)",      cal: 70,  protein: 6,  fat: 5 },
+  rice_scoop:        { label: "Rice (scoop)",            cal: 220, protein: 4,  fat: 0 },
+  watermelon_juice:  { label: "Watermelon juice",        cal: 120, protein: 1,  fat: 0 },
+  fruit:             { label: "Fruit (piece)",           cal: 90,  protein: 1,  fat: 0 },
+  espresso:          { label: "Espresso",                cal: 5,   protein: 1,  fat: 0 },
+  whey_scoop:        { label: "Whey protein (scoop)",    cal: 120, protein: 24, fat: 2 },
+  pb2_scoop:         { label: "PB2 Pro (scoop)",         cal: 65,  protein: 13, fat: 1.5 },
+  redbull_sf:        { label: "Sugar-free energy drink", cal: 10,  protein: 0,  fat: 0 },
+  greens:            { label: "Greens",                  cal: 20,  protein: 2,  fat: 0 },
+  tuna_spicy_scoop:  { label: "Spicy tuna (scoop)",       cal: 45,  protein: 9,  fat: 2 },
+  tuna_raw_scoop:    { label: "Raw tuna (scoop)",         cal: 40,  protein: 10, fat: 0.5 },
+  boiled_egg:        { label: "Boiled egg (store)",       cal: 70,  protein: 6,  fat: 5 },
+  tofu_pack:         { label: "Tofu pack (store)",        cal: 80,  protein: 8,  fat: 4 },
+  added_fat:         { label: "Added oil/sauce/dressing", cal: 90,  protein: 0,  fat: 10 },
 };
 
 // Planned quantities per meal (item id -> planned qty). Days start with these items at 0
