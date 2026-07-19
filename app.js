@@ -47,6 +47,8 @@ function loadState() {
       }
       if (!parsed.customPresets) parsed.customPresets = [];
       if (parsed.goal === undefined) parsed.goal = null;
+      if (!parsed.itemUsage) parsed.itemUsage = {};
+      if (parsed.lastExportAt === undefined) parsed.lastExportAt = null;
       // backward compat: water used to be logged in quarter-bottles, now plain ounces
       for (const d of Object.values(parsed.days)) {
         if (d.water && d.water.quarterBottles !== undefined) {
@@ -81,6 +83,8 @@ function loadState() {
     nextRoutineIndex: 0,
     customPresets: [],
     goal: null,
+    itemUsage: {},
+    lastExportAt: null,
   };
 }
 
@@ -89,6 +93,15 @@ function saveState() {
 }
 
 // ---------- date helpers ----------
+
+// Most-used items first (stable sort keeps catalog order among ties, e.g. all-zero usage).
+function sortByUsage(ids) {
+  return [...ids].sort((a, b) => (state.itemUsage[b] || 0) - (state.itemUsage[a] || 0));
+}
+
+function bumpItemUsage(id) {
+  state.itemUsage[id] = (state.itemUsage[id] || 0) + 1;
+}
 
 function formatDateKey(d) {
   const y = d.getFullYear();
@@ -328,7 +341,7 @@ function renderMealDefaultsEditor(mealName) {
   }).join("") : `<div class="empty-state">No planned items — add one below</div>`;
 
   const allIds = [...Object.keys(ITEM_CATALOG), ...Object.keys(state.customItems)];
-  const notInTemplate = allIds.filter(id => !(id in template));
+  const notInTemplate = sortByUsage(allIds.filter(id => !(id in template)));
   const options = notInTemplate.map(id => `<option value="${id}">${itemDef(id).label}</option>`).join("");
 
   return `
@@ -369,7 +382,7 @@ function renderMealInner(day, mealName, title) {
   }).join("") : `<div class="empty-state">Nothing planned — add an item below</div>`;
 
   const allIds = [...Object.keys(ITEM_CATALOG), ...Object.keys(state.customItems)];
-  const notInMeal = allIds.filter(id => !(id in meal));
+  const notInMeal = sortByUsage(allIds.filter(id => !(id in meal)));
   const options = notInMeal.map(id => `<option value="${id}">${itemDef(id).label}</option>`).join("");
   const hasTemplate = Object.keys(template).length > 0;
 
@@ -409,7 +422,7 @@ function renderMealInner(day, mealName, title) {
 function renderToday(day) {
   const totals = dayTotals(day);
   const calTarget = calorieTargetFor(day) ?? (isTrainingDay(day) ? state.targets.calTrain : state.targets.calRest);
-  const proteinTarget = state.targets.protein;
+  const { protein: proteinTarget, fat: fatTarget, carbs: carbsTarget } = macroTargetsFor(day, calTarget);
   const waterTarget = waterTargetFor(day.workout.type);
   const waterOz = day.water.oz || 0;
   const waterTargetOzMin = waterTarget.min * BOTTLE_OZ;
@@ -418,8 +431,6 @@ function renderToday(day) {
 
   const activityBadgeClass = day.workout.type || "rest";
 
-  const fatTarget = state.targets.fat;
-  const carbsTarget = state.targets.carbs;
   const rings = [
     { label: "cal", value: Math.round(totals.cal), target: calTarget, color: MACRO_RING_COLORS.cal, suffix: "" },
     { label: "protein", value: Math.round(totals.protein), target: proteinTarget, color: MACRO_RING_COLORS.protein, suffix: "g" },
@@ -893,20 +904,46 @@ function renderGoalCard() {
   const weeksLeft = Math.max(0, g.weeks - elapsedWeeks);
   const today = getOrCreateDay(formatDateKey(new Date()));
   const todayTarget = calorieTargetFor(today);
+  const todayMacros = macroTargetsFor(today, todayTarget);
   const rateWarning = Math.abs(weeklyRate) > 2 ? `<div class="meal-item-macro" style="color:var(--warn); margin-top:6px;">⚠ ${Math.abs(weeklyRate).toFixed(1)} lb/week is an aggressive rate — consider a longer timeframe.</div>` : "";
+  const pace = goalPaceStatus();
+  const paceLine = !pace
+    ? `<div class="meal-item-macro">Log your weight on the Today tab to see pace vs. plan.</div>`
+    : Math.abs(pace.aheadBy) < 1
+      ? `<div class="meal-item-macro">On pace — expected ~${pace.expected} lb today, you're at ${pace.actual} lb.</div>`
+      : pace.aheadBy > 0
+        ? `<div class="meal-item-macro" style="color:var(--good);">${pace.aheadBy.toFixed(1)} lb ahead of pace (expected ~${pace.expected} lb, you're at ${pace.actual} lb).</div>`
+        : `<div class="meal-item-macro" style="color:var(--warn);">${Math.abs(pace.aheadBy).toFixed(1)} lb behind pace (expected ~${pace.expected} lb, you're at ${pace.actual} lb).</div>`;
 
   return `
     <div class="card">
       <div class="row"><h2 style="margin:0;">Weight Goal</h2><button class="icon-btn" data-action="toggleGoalForm">✎</button></div>
       <div class="meal-item-macro">${g.startWeight} → ${g.goalWeight} lb over ${g.weeks} weeks (${weeklyRate >= 0 ? "+" : ""}${weeklyRate.toFixed(1)} lb/week)</div>
       <div class="meal-item-macro">${weeksLeft} of ${g.weeks} weeks left</div>
-      <div class="meal-item-macro" style="margin-top:6px;">Today's calorie target: <strong style="color:var(--text);">${todayTarget}</strong></div>
+      ${paceLine}
+      <div class="meal-item-macro" style="margin-top:6px;">Today's target: <strong style="color:var(--text);">${todayTarget} cal</strong> · ${todayMacros.protein}g protein · ${todayMacros.carbs}g carbs · ${todayMacros.fat}g fat</div>
       ${rateWarning}
       <div class="row" style="margin-top:10px;">
         <button class="btn secondary" data-action="clearGoal" style="width:100%;">Clear goal</button>
       </div>
     </div>
   `;
+}
+
+function daysSinceLastExport() {
+  if (!state.lastExportAt) return null;
+  return Math.floor((Date.now() - Date.parse(state.lastExportAt)) / 86400000);
+}
+
+function renderBackupStatus() {
+  const daysSince = daysSinceLastExport();
+  if (daysSince === null) {
+    return `<div class="meal-item-macro" style="color:var(--warn); margin-bottom:8px;">⚠ You haven't exported a backup yet — everything lives only in this browser.</div>`;
+  }
+  if (daysSince > 14) {
+    return `<div class="meal-item-macro" style="color:var(--warn); margin-bottom:8px;">⚠ Last backup was ${daysSince} days ago — consider exporting again.</div>`;
+  }
+  return `<div class="meal-item-macro" style="margin-bottom:8px;">Last backup: ${daysSince === 0 ? "today" : `${daysSince} day${daysSince === 1 ? "" : "s"} ago`}.</div>`;
 }
 
 function renderProgressShell() {
@@ -923,6 +960,7 @@ function renderProgressShell() {
     </div>
     <div class="card">
       <h2>Backup</h2>
+      ${renderBackupStatus()}
       <div class="row">
         <button class="btn secondary" data-action="exportData">Export JSON</button>
         <label class="btn secondary" style="text-align:center;">
@@ -973,6 +1011,37 @@ function calorieTargetFor(day) {
   const stepsBonus = (day.steps || 0) * STEP_KCAL_PER_STEP;
   const delta = requiredDailyDeltaKcal(goal);
   return Math.round(base + exerciseBonus + stepsBonus + delta);
+}
+
+// Protein/fat/carbs targets for the day. Scales with bodyweight + the dynamic calorie
+// target when a goal is set; otherwise falls back to the manual state.targets grams.
+function macroTargetsFor(day, calTarget) {
+  const goal = state.goal;
+  if (!goal) return { protein: state.targets.protein, fat: state.targets.fat, carbs: state.targets.carbs };
+  const weight = latestKnownWeight() ?? goal.startWeight;
+  const protein = Math.round(weight * PROTEIN_PER_LB_GOAL);
+  const fat = Math.round(weight * FAT_PER_LB_GOAL);
+  const remainingCals = Math.max(0, calTarget - protein * 4 - fat * 9);
+  const carbs = Math.round(remainingCals / 4);
+  return { protein, fat, carbs };
+}
+
+// Compares your actual logged weight to the straight-line pace needed to hit the goal
+// on schedule. Returns null if there's no goal or no logged weight yet to compare against
+// (falling back to the goal's own startWeight would just always show "on pace").
+function goalPaceStatus() {
+  const g = state.goal;
+  if (!g) return null;
+  const series = weightSeries();
+  if (!series.length) return null;
+  const actual = series[series.length - 1].y;
+  const totalDays = g.weeks * 7;
+  const elapsedDays = Math.min(totalDays, Math.max(0, (Date.parse(formatDateKey(new Date())) - Date.parse(g.startDate)) / 86400000));
+  const expected = g.startWeight + (g.goalWeight - g.startWeight) * (elapsedDays / totalDays);
+  const diff = actual - expected;
+  const losing = g.goalWeight < g.startWeight;
+  const aheadBy = losing ? -diff : diff; // positive = ahead of schedule toward the goal
+  return { actual, expected: Math.round(expected * 10) / 10, aheadBy: Math.round(aheadBy * 10) / 10 };
 }
 
 function rollingAverageSeries(series, windowSize) {
@@ -1373,7 +1442,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     const mealName = el.dataset.meal;
     const select = document.getElementById("template-add-" + mealName);
     const id = select.value;
-    if (id) { state.mealTemplates[mealName][id] = 1; saveState(); render(); }
+    if (id) { state.mealTemplates[mealName][id] = 1; bumpItemUsage(id); saveState(); render(); }
     return;
   }
   if (action === "toggleScheduleEdit") {
@@ -1485,6 +1554,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     const id = "custom_food_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     state.customItems[id] = { label: name, cal, protein, carbs, fat };
     day.meals[mealName][id] = 1;
+    bumpItemUsage(id);
     quickAddOpen = false;
     saveState(); render(); return;
   }
@@ -1640,7 +1710,7 @@ document.getElementById("view-root").addEventListener("change", e => {
 
   if (action === "mealAdd") {
     const id = el.value;
-    if (id) { day.meals[el.dataset.meal][id] = 1; saveState(); render(); }
+    if (id) { day.meals[el.dataset.meal][id] = 1; bumpItemUsage(id); saveState(); render(); }
     return;
   }
   if (action === "toggleRoutineExerciseBarbell") {
@@ -1723,12 +1793,15 @@ async function exportData() {
   const photos = await getAllPhotos();
   const photosOut = [];
   for (const p of photos) photosOut.push({ id: p.id, dataURL: await blobToDataURL(p.blob) });
-  const payload = { state, photos: photosOut, exportedAt: new Date().toISOString() };
+  state.lastExportAt = new Date().toISOString();
+  saveState();
+  const payload = { state, photos: photosOut, exportedAt: state.lastExportAt };
   const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `cut-plan-backup-${formatDateKey(new Date())}.json`;
   a.click();
+  if (currentTab === "progress") render();
 }
 
 async function importData(file) {

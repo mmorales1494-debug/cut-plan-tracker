@@ -23,6 +23,10 @@ const KCAL_PER_LB = 3500; // standard approximation for 1 lb of body fat
 const GOAL_ACTIVITY_MULTIPLIER = 1.2; // sedentary baseline — exercise/steps bonuses cover the rest
 const STEP_KCAL_PER_STEP = 0.04;
 const WORKOUT_KCAL_BONUS = { rest: 0, resistance: 150, run: 250, boulder: 300 };
+// When a goal is set, protein/fat scale with bodyweight (standard cut guidance) and
+// carbs fill whatever calories are left, instead of staying at fixed manual grams.
+const PROTEIN_PER_LB_GOAL = 0.8;
+const FAT_PER_LB_GOAL = 0.35;
 
 // Bump suggested water target on bouldering days (long, high-sweat sessions).
 function waterTargetFor(activity) {
