@@ -217,6 +217,16 @@ html, body {
 }
 .quick-add-form .field:last-of-type { margin-bottom: 10px; }
 
+.schedule-edit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+}
+.schedule-edit-row label { font-size: 13px; flex: 0 0 88px; }
+.schedule-edit-row select { flex: 1; }
+
 select, input[type="number"], input[type="text"], input[type="date"], textarea {
   background: var(--surface-2);
   border: 1px solid var(--border);

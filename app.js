@@ -16,6 +16,7 @@ function loadState() {
     try {
       const parsed = JSON.parse(raw);
       if (!parsed.customItems) parsed.customItems = {};
+      if (!parsed.weeklySchedule) parsed.weeklySchedule = { ...WEEKLY_SCHEDULE };
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
       for (const item of Object.values(parsed.customItems)) { if (item.fat === undefined) item.fat = 0; }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
@@ -38,6 +39,7 @@ function loadState() {
     checkIns: [],
     checklistItems: SUPPLEMENTS.map(s => ({ ...s })),
     customItems: {},
+    weeklySchedule: { ...WEEKLY_SCHEDULE },
   };
 }
 
@@ -89,7 +91,7 @@ function emptyMealsFromTemplate() {
 function getOrCreateDay(dateKey) {
   if (!state.days[dateKey]) {
     const dow = parseKey(dateKey).getDay();
-    const scheduled = WEEKLY_SCHEDULE[dow];
+    const scheduled = state.weeklySchedule[dow];
     state.days[dateKey] = {
       scheduledActivity: scheduled,
       meals: emptyMealsFromTemplate(),
@@ -517,12 +519,40 @@ function scheduledActivityLabel(scheduled) {
   return scheduled === null ? "Flexible / make-up day" : activityLabel(scheduled);
 }
 
+let scheduleEditOpen = false;
+const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const DOW_LABELS = { 0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday", 6: "Saturday" };
+const SCHEDULE_OPTIONS = [
+  { value: "", label: "Flexible / make-up" },
+  { value: "rest", label: "Rest" },
+  { value: "resistance", label: "Resistance" },
+  { value: "run", label: "Run + Core" },
+  { value: "boulder", label: "Bouldering" },
+];
+
+function renderScheduleEditor() {
+  return `
+    <div class="quick-add-form">
+      ${DOW_ORDER.map(dow => {
+        const current = state.weeklySchedule[dow] ?? "";
+        return `
+        <div class="schedule-edit-row">
+          <label>${DOW_LABELS[dow]}</label>
+          <select data-action="setScheduleDay" data-dow="${dow}">
+            ${SCHEDULE_OPTIONS.map(o => `<option value="${o.value}" ${current === o.value ? "selected" : ""}>${o.label}</option>`).join("")}
+          </select>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderUpcomingSchedule(daysAhead) {
   const todayKey = formatDateKey(new Date());
   const rows = [];
   for (let i = 0; i < daysAhead; i++) {
     const key = addDays(todayKey, i);
-    const scheduled = WEEKLY_SCHEDULE[parseKey(key).getDay()];
+    const scheduled = state.weeklySchedule[parseKey(key).getDay()];
     rows.push(`
       <div class="meal-item">
         <div class="meal-item-label">${i === 0 ? "Today — " : ""}${niceDate(key)}</div>
@@ -532,8 +562,13 @@ function renderUpcomingSchedule(daysAhead) {
   }
   return `
     <div class="card">
-      <h2>Upcoming schedule</h2>
-      ${rows.join("")}
+      <div class="row">
+        <h2 style="margin:0;">Upcoming schedule</h2>
+        <button class="btn secondary" data-action="toggleScheduleEdit">${scheduleEditOpen ? "Done" : "Edit schedule"}</button>
+      </div>
+      ${scheduleEditOpen
+        ? `<div class="meal-item-macro" style="margin:10px 0;">Sets the recurring weekly pattern going forward. Days you've already logged won't change.</div>${renderScheduleEditor()}`
+        : rows.join("")}
     </div>
   `;
 }
@@ -865,6 +900,10 @@ document.getElementById("view-root").addEventListener("click", e => {
     quickAddOpen = !quickAddOpen;
     render(); return;
   }
+  if (action === "toggleScheduleEdit") {
+    scheduleEditOpen = !scheduleEditOpen;
+    render(); return;
+  }
   if (action === "submitQuickAdd") {
     const mealName = el.dataset.meal;
     const name = document.getElementById("quickadd-name").value.trim();
@@ -986,6 +1025,11 @@ document.getElementById("view-root").addEventListener("change", e => {
     const id = el.value;
     if (id) { day.meals[el.dataset.meal][id] = 1; saveState(); render(); }
     return;
+  }
+  if (action === "setScheduleDay") {
+    const dow = Number(el.dataset.dow);
+    state.weeklySchedule[dow] = el.value === "" ? null : el.value;
+    saveState(); render(); return;
   }
   if (action === "addPhoto") {
     const file = el.files[0];
