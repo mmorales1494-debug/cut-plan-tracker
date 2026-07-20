@@ -458,6 +458,16 @@ input[type="range"]::-moz-range-thumb {
   gap: 8px;
 }
 
+.grade-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.grade-grid button {
+  flex: 1 1 22%;
+  min-width: 60px;
+}
+
 .empty-state {
   color: var(--text-dim);
   font-size: 13px;

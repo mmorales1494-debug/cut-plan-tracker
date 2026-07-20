@@ -23,6 +23,9 @@ const KCAL_PER_LB = 3500; // standard approximation for 1 lb of body fat
 const GOAL_ACTIVITY_MULTIPLIER = 1.2; // sedentary baseline — exercise/steps bonuses cover the rest
 const STEP_KCAL_PER_STEP = 0.04;
 const WORKOUT_KCAL_BONUS = { rest: 0, resistance: 150, run: 250, boulder: 300 };
+
+// Quick-log grade buttons for the bouldering climb log — V7+ catches anything harder.
+const CLIMBING_GRADES = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7+"];
 // When a goal is set, protein/fat scale with bodyweight (standard cut guidance) and
 // carbs fill whatever calories are left, instead of staying at fixed manual grams.
 const PROTEIN_PER_LB_GOAL = 0.8;

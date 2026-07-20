@@ -49,11 +49,15 @@ function loadState() {
       if (parsed.goal === undefined) parsed.goal = null;
       if (!parsed.itemUsage) parsed.itemUsage = {};
       if (parsed.lastExportAt === undefined) parsed.lastExportAt = null;
-      // backward compat: water used to be logged in quarter-bottles, now plain ounces
+      // backward compat: water used to be logged in quarter-bottles, now plain ounces;
+      // bouldering sessions used to only track minutes, now also a per-climb grade log
       for (const d of Object.values(parsed.days)) {
         if (d.water && d.water.quarterBottles !== undefined) {
           d.water.oz = d.water.quarterBottles * (BOTTLE_OZ / 4);
           delete d.water.quarterBottles;
+        }
+        if (d.workout && d.workout.boulder && d.workout.boulder.climbs === undefined) {
+          d.workout.boulder.climbs = [];
         }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
@@ -172,7 +176,7 @@ function getOrCreateDay(dateKey) {
         routineId: null,
         core: scheduled === "run" ? CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] })) : [],
         run: { miles: "", minutes: "" },
-        boulder: { minutes: "" },
+        boulder: { minutes: "", climbs: [] },
       },
       weight: null,
       waist: null,
@@ -219,7 +223,7 @@ function workoutStatusLabel(day) {
     if (!cardioDone && coreDoneCount === 0) return "Not started";
     return "In progress";
   }
-  if (w.type === "boulder") return Number(w.boulder.minutes) > 0 ? "Done" : "Not started";
+  if (w.type === "boulder") return (Number(w.boulder.minutes) > 0 || w.boulder.climbs.length > 0) ? "Done" : "Not started";
   return "—";
 }
 
@@ -633,7 +637,26 @@ function renderWorkoutBody(day) {
     `;
   }
   if (w.type === "boulder") {
-    return `<div class="field"><label>Session length (minutes)</label><input type="number" inputmode="numeric" data-action="setBoulderMinutes" value="${w.boulder.minutes}"></div>`;
+    const climbs = w.boulder.climbs;
+    const tally = CLIMBING_GRADES.map(g => ({ grade: g, count: climbs.filter(c => c.grade === g).length })).filter(t => t.count > 0);
+    return `
+      <div class="field"><label>Session length (minutes)</label><input type="number" inputmode="numeric" data-action="setBoulderMinutes" value="${w.boulder.minutes}"></div>
+      <h3 style="margin-top:16px; margin-bottom:8px;">Log a climb</h3>
+      <div class="grade-grid">
+        ${CLIMBING_GRADES.map(g => `<button class="btn secondary" data-action="logClimb" data-grade="${g}">${g}</button>`).join("")}
+      </div>
+      ${climbs.length ? `
+        <div class="meal-item-macro" style="margin-top:10px;">${climbs.length} climb${climbs.length === 1 ? "" : "s"} — ${tally.map(t => `${t.grade}×${t.count}`).join(", ")}</div>
+        <div style="margin-top:8px;">
+          ${climbs.map((c, i) => `
+            <div class="meal-item">
+              <div class="meal-item-label">${c.grade}</div>
+              <button class="icon-btn" data-action="removeClimb" data-idx="${i}">✕</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : `<div class="empty-state" style="margin-top:10px;">No climbs logged yet — tap a grade above as you send.</div>`}
+    `;
   }
   return `<div class="empty-state">Rest day — nothing to log</div>`;
 }
@@ -851,7 +874,7 @@ function renderWorkouts() {
           <td>${activityLabel(d.workout.type)}</td>
           <td>${d.workout.type === "run"
             ? `${d.workout.run.miles || 0} mi / ${d.workout.run.minutes || 0} min${d.workout.core && d.workout.core.length ? ` + core (${d.workout.core.filter(ex => ex.sets.length > 0).length}/${d.workout.core.length})` : ""}`
-            : `${d.workout.boulder.minutes || 0} min`}</td>
+            : `${d.workout.boulder.minutes || 0} min${d.workout.boulder.climbs && d.workout.boulder.climbs.length ? ` · ${d.workout.boulder.climbs.length} climb${d.workout.boulder.climbs.length === 1 ? "" : "s"}` : ""}`}</td>
         </tr>
       `).join("")}
     </table>
@@ -1588,6 +1611,14 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "removeSet") {
     day.workout.exercises[Number(el.dataset.ex)].sets.splice(Number(el.dataset.set), 1);
+    saveState(); render(); return;
+  }
+  if (action === "logClimb") {
+    day.workout.boulder.climbs.push({ grade: el.dataset.grade });
+    saveState(); render(); return;
+  }
+  if (action === "removeClimb") {
+    day.workout.boulder.climbs.splice(Number(el.dataset.idx), 1);
     saveState(); render(); return;
   }
   if (action === "addCoreSet") {
