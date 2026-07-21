@@ -439,7 +439,6 @@ function daysSinceFingerLoad() {
 }
 
 function renderPullSuggestion(day) {
-  if (!day.completed) return ""; // only relevant once the day's actually been logged, not while previewing ahead
   if (day.workout.type !== "resistance" && day.workout.type !== "run") return "";
   if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return "";
   return `
@@ -907,7 +906,7 @@ function renderResistanceProgression() {
 
 function renderWorkouts() {
   const cardioRows = Object.entries(state.days)
-    .filter(([, d]) => d.workout.type === "run" || d.workout.type === "boulder")
+    .filter(([, d]) => d.completed && (d.workout.type === "run" || d.workout.type === "boulder"))
     .sort(([a], [b]) => b.localeCompare(a))
     .slice(0, 15);
 

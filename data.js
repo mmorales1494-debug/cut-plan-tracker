@@ -29,7 +29,8 @@ const CLIMBING_GRADES = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7+"];
 
 // Minimum days since the last finger-intensive session (bouldering or hangboard) before
 // suggesting extra pulling work on a resistance/run day — avoids stacking finger load.
-const FINGER_RECOVERY_DAYS = 1;
+// e.g. climb Monday: Tuesday (1 day since) stays quiet, Wednesday (2 days since) shows it.
+const FINGER_RECOVERY_DAYS = 2;
 // When a goal is set, protein/fat scale with bodyweight (standard cut guidance) and
 // carbs fill whatever calories are left, instead of staying at fixed manual grams.
 const PROTEIN_PER_LB_GOAL = 0.8;
