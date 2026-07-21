@@ -439,6 +439,7 @@ function daysSinceFingerLoad() {
 }
 
 function renderPullSuggestion(day) {
+  if (!day.completed) return ""; // only relevant once the day's actually been logged, not while previewing ahead
   if (day.workout.type !== "resistance" && day.workout.type !== "run") return "";
   if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return "";
   return `
