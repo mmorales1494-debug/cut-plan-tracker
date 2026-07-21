@@ -47,6 +47,7 @@ const REP_TARGET = { min: 8, max: 12 };
 const SET_TARGET = { min: 3, max: 4 };
 const WEIGHT_STEP_KG = 2.5;
 const DEFAULT_REST_SECONDS = 120;
+const CORE_REST_SECONDS = 45;
 const KG_TO_LB = 2.20462;
 
 // Standard barbell + plate assumptions for the plate-loading calculator.

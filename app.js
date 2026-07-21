@@ -430,7 +430,7 @@ function renderMealInner(day, mealName, title) {
 // timer run), so resistance/run days know whether it's safe to suggest more pulling work.
 function daysSinceFingerLoad() {
   const dates = Object.entries(state.days)
-    .filter(([, d]) => d.workout.type === "boulder" || (d.hangboardSessions || 0) > 0)
+    .filter(([, d]) => (d.completed && d.workout.type === "boulder") || (d.hangboardSessions || 0) > 0)
     .map(([k]) => k)
     .sort();
   if (!dates.length) return Infinity;
@@ -668,6 +668,13 @@ function renderWorkoutBody(day) {
     }).join("");
   }
   if (w.type === "run") {
+    const restBanner = restTimerRemaining > 0 ? `
+      <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
+        <div class="timer-phase">Resting</div>
+        <div class="timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
+        <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
+      </div>
+    ` : "";
     return `
       <div class="two-col">
         <div class="field"><label>Miles</label><input type="number" inputmode="decimal" step="0.1" data-action="setRunField" data-field="miles" value="${w.run.miles}"></div>
@@ -675,6 +682,7 @@ function renderWorkoutBody(day) {
       </div>
       <h3 style="margin-top:16px; margin-bottom:4px;">Core work</h3>
       <div class="meal-item-macro" style="margin-bottom:10px;">10-15 min total, progressive — add reps/time/weight weekly</div>
+      ${restBanner}
       ${w.core.map((ex, exIdx) => renderCoreExerciseBlock(ex, exIdx)).join("")}
     `;
   }
@@ -1840,6 +1848,10 @@ document.getElementById("view-root").addEventListener("change", e => {
   if (action === "setField" && el.dataset.field === "reps" && el.value !== "") {
     const routine = routineForDay(day);
     startRestTimer(routine.restSeconds || DEFAULT_REST_SECONDS);
+    return;
+  }
+  if (action === "setCoreField" && (el.dataset.field === "reps" || el.dataset.field === "seconds") && el.value !== "") {
+    startRestTimer(CORE_REST_SECONDS);
     return;
   }
   if (action === "toggleRoutineExerciseBarbell") {
