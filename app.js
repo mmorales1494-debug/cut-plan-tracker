@@ -40,6 +40,13 @@ function loadState() {
       });
       if (!parsed.routines.some(r => r.active)) parsed.routines[0].active = true;
       parsed.routines.forEach(r => { if (r.restSeconds === undefined) r.restSeconds = DEFAULT_REST_SECONDS; });
+      // one-time addition: rotator cuff work wasn't in any routine before — add it if missing
+      // (still just a normal exercise afterward, remove it in Workout Routines if not wanted)
+      parsed.routines.forEach(r => {
+        if (!r.exercises.some(ex => ex.name === "Band External Rotation")) {
+          r.exercises.push({ name: "Band External Rotation", barbell: false });
+        }
+      });
       if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
       if (parsed.targets.carbs === undefined) parsed.targets.carbs = DEFAULT_TARGETS.carbs;
@@ -60,6 +67,9 @@ function loadState() {
         }
         if (d.workout && d.workout.boulder && d.workout.boulder.climbs === undefined) {
           d.workout.boulder.climbs = [];
+        }
+        if (d.workout && d.workout.boulder && d.workout.boulder.sessionType === undefined) {
+          d.workout.boulder.sessionType = null;
         }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
@@ -178,7 +188,7 @@ function getOrCreateDay(dateKey) {
         routineId: null,
         core: scheduled === "run" ? CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] })) : [],
         run: { miles: "", minutes: "" },
-        boulder: { minutes: "", climbs: [] },
+        boulder: { minutes: "", climbs: [], sessionType: null },
       },
       weight: null,
       waist: null,
@@ -444,7 +454,7 @@ function renderPullSuggestion(day) {
   return `
     <div class="card">
       <h2>Climbing Strength</h2>
-      <div class="meal-item-macro">Fingers are recovered — good day to tack on some pulling work: 3-5 sets of weighted pull-ups/hangs on the block, or 3×8-10 cable rows/lat pulldowns.</div>
+      <div class="meal-item-macro">Good day to tack on some pulling work: 3-5 sets of weighted pull-ups (bar), or 3×8-10 cable rows/lat pulldowns — bar/machine grips only, skip the block so fingers stay recovered.</div>
     </div>
   `;
 }
@@ -690,6 +700,12 @@ function renderWorkoutBody(day) {
     const climbs = w.boulder.climbs;
     const tally = CLIMBING_GRADES.map(g => ({ grade: g, count: climbs.filter(c => c.grade === g).length })).filter(t => t.count > 0);
     return `
+      <div class="field">
+        <label>Session type</label>
+        <div class="toggle-pill">
+          ${BOULDER_SESSION_TYPES.map(t => `<button data-action="setBoulderSessionType" data-type="${t}" class="${w.boulder.sessionType === t ? "active" : ""}">${t}</button>`).join("")}
+        </div>
+      </div>
       <div class="field"><label>Session length (minutes)</label><input type="number" inputmode="numeric" data-action="setBoulderMinutes" value="${w.boulder.minutes}"></div>
       <h3 style="margin-top:16px; margin-bottom:8px;">Log a climb</h3>
       <div class="grade-grid">
@@ -927,7 +943,7 @@ function renderWorkouts() {
           <td>${activityLabel(d.workout.type)}</td>
           <td>${d.workout.type === "run"
             ? `${d.workout.run.miles || 0} mi / ${d.workout.run.minutes || 0} min${d.workout.core && d.workout.core.length ? ` + core (${d.workout.core.filter(ex => ex.sets.length > 0).length}/${d.workout.core.length})` : ""}`
-            : `${d.workout.boulder.minutes || 0} min${d.workout.boulder.climbs && d.workout.boulder.climbs.length ? ` · ${d.workout.boulder.climbs.length} climb${d.workout.boulder.climbs.length === 1 ? "" : "s"}` : ""}`}</td>
+            : `${d.workout.boulder.sessionType ? `${d.workout.boulder.sessionType} · ` : ""}${d.workout.boulder.minutes || 0} min${d.workout.boulder.climbs && d.workout.boulder.climbs.length ? ` · ${d.workout.boulder.climbs.length} climb${d.workout.boulder.climbs.length === 1 ? "" : "s"}` : ""}`}</td>
         </tr>
       `).join("")}
     </table>
@@ -1450,9 +1466,15 @@ function renderClimbing() {
   const displayTime = isIdle ? formatMMSS(totalSeconds) : isDone ? "Done!" : formatMMSS(timerRemaining);
   const phaseClass = timerPhase === "work" ? "work" : (timerPhase === "rest" || timerPhase === "restBetweenSets" || timerPhase === "prep") ? "rest" : timerPhase === "done" ? "done" : "";
 
+  const fingerDaysSince = daysSinceFingerLoad();
+  const fingerRecoveryNote = fingerDaysSince === Infinity
+    ? "No finger sessions logged yet."
+    : `Last finger session: ${fingerDaysSince} day${fingerDaysSince === 1 ? "" : "s"} ago.`;
+
   return `
     <div class="card">
       <h2>Hangboard Timer</h2>
+      <div class="meal-item-macro" style="margin-bottom:10px;">${fingerRecoveryNote}</div>
       ${modeSwitcher}
       ${presetList}
       ${configPanel}
@@ -1700,6 +1722,10 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "removeSet") {
     day.workout.exercises[Number(el.dataset.ex)].sets.splice(Number(el.dataset.set), 1);
+    saveState(); render(); return;
+  }
+  if (action === "setBoulderSessionType") {
+    day.workout.boulder.sessionType = el.dataset.type;
     saveState(); render(); return;
   }
   if (action === "logClimb") {

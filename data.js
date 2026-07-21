@@ -139,7 +139,12 @@ const RESISTANCE_EXERCISES = [
   "Dumbbell Row",
   "Push-Up",
   "Walking Lunge",
+  "Band External Rotation",
 ];
+
+// Boulder session modes — matches the standard power/limit vs volume vs power-endurance
+// training split so session type is tracked alongside minutes and the climb log.
+const BOULDER_SESSION_TYPES = ["Power/Limit", "Volume/Mileage", "Power-Endurance"];
 
 // Core work, paired with run days. Each has its own input type since they're logged differently:
 // reps = bodyweight sets x reps, duration = timed hold (seconds), weighted-reps = weight + reps.
