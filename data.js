@@ -146,6 +146,28 @@ const RESISTANCE_EXERCISES = [
 // training split so session type is tracked alongside minutes and the climb log.
 const BOULDER_SESSION_TYPES = ["Power/Limit", "Volume/Mileage", "Power-Endurance"];
 
+// Grid trackers for the two structured session types (Volume/Mileage just uses the plain
+// climb log already built). restTrigger "cell" = rest after every marked box (Power/Limit —
+// full recovery needed between every near-limit attempt); "row" = rest only once a whole row
+// is filled (Power-Endurance/4x4s — minimal rest within a round, real rest between rounds).
+const BOULDER_GRID_CONFIG = {
+  "Power/Limit": { rows: 8, cols: 5, restSeconds: 240, restTrigger: "cell", rowLabel: "Problem" },
+  "Power-Endurance": { rows: 3, cols: 4, restSeconds: 240, restTrigger: "row", rowLabel: "Round" },
+};
+
+// Standard progressive climbing warm-up: general mobility, then a "4 up 4 down" style
+// easy-to-moderate pyramid. restAfter is the rest (seconds) to take once that step is
+// checked off, before starting the next one — 0 means move straight on (or that's the last step).
+const CLIMBING_WARMUP_STEPS = [
+  { label: "Light cardio — jog in place, jumping jacks, easy bike (~5 min)", restAfter: 0 },
+  { label: "Dynamic mobility — arm circles, shoulder rolls, wrist circles, hip openers/lunges (~3 min)", restAfter: 0 },
+  { label: "Easy hangs — 3-4× 10s hangs on a jug/big edge to wake up fingers", restAfter: 60 },
+  { label: "3-4 easy problems (VB-V0)", restAfter: 120 },
+  { label: "2 problems (V1)", restAfter: 120 },
+  { label: "2 problems (V2)", restAfter: 150 },
+  { label: "1 problem (V3, or one grade below today's target)", restAfter: 0 },
+];
+
 // Written for a full 1.5-2hr session, not just the core protocol — warm-up plus enough
 // rounds/volume to actually fill that time (the long rests in Power/Limit and Power-Endurance
 // do most of that work; Volume/Mileage fills it with total problem count instead).

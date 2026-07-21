@@ -71,6 +71,12 @@ function loadState() {
         if (d.workout && d.workout.boulder && d.workout.boulder.sessionType === undefined) {
           d.workout.boulder.sessionType = null;
         }
+        if (d.workout && d.workout.boulder && d.workout.boulder.warmupDone === undefined) {
+          d.workout.boulder.warmupDone = [];
+        }
+        if (d.workout && d.workout.boulder && d.workout.boulder.grid === undefined) {
+          d.workout.boulder.grid = [];
+        }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
@@ -188,7 +194,7 @@ function getOrCreateDay(dateKey) {
         routineId: null,
         core: scheduled === "run" ? CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] })) : [],
         run: { miles: "", minutes: "" },
-        boulder: { minutes: "", climbs: [], sessionType: null },
+        boulder: { minutes: "", climbs: [], sessionType: null, warmupDone: [], grid: [] },
       },
       weight: null,
       waist: null,
@@ -644,6 +650,22 @@ function renderPlateCalc(weightKg) {
   return `<div class="plate-calc"><span class="plate-calc-label">Per side:</span> ${chips}</div>`;
 }
 
+function renderBoulderGrid(sessionType, grid) {
+  const config = BOULDER_GRID_CONFIG[sessionType];
+  if (!config || !grid.length) return "";
+  return `
+    <h3 style="margin-bottom:8px;">${sessionType} Tracker</h3>
+    ${grid.map((row, r) => `
+      <div class="grid-row">
+        <div class="grid-row-label">${config.rowLabel} ${r + 1}</div>
+        <div class="grid-cells">
+          ${row.map((cell, c) => `<button class="grid-cell ${cell || ""}" data-action="toggleGridCell" data-row="${r}" data-col="${c}">${cell === "done" ? "✓" : cell === "fail" ? "✕" : ""}</button>`).join("")}
+        </div>
+      </div>
+    `).join("")}
+  `;
+}
+
 function renderWorkoutBody(day) {
   const w = day.workout;
   if (w.type === "resistance") {
@@ -699,7 +721,26 @@ function renderWorkoutBody(day) {
   if (w.type === "boulder") {
     const climbs = w.boulder.climbs;
     const tally = CLIMBING_GRADES.map(g => ({ grade: g, count: climbs.filter(c => c.grade === g).length })).filter(t => t.count > 0);
+    const warmupDone = w.boulder.warmupDone;
+    const restBanner = restTimerRemaining > 0 ? `
+      <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
+        <div class="timer-phase">Resting</div>
+        <div class="timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
+        <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
+      </div>
+    ` : "";
+    const warmupChecklist = `
+      <h3 style="margin-bottom:8px;">Warm-up</h3>
+      ${CLIMBING_WARMUP_STEPS.map((step, i) => `
+        <div class="meal-item">
+          <button class="todo-check ${warmupDone[i] ? "checked" : ""}" data-action="toggleWarmupStep" data-idx="${i}"></button>
+          <div class="todo-label">${step.label}</div>
+        </div>
+      `).join("")}
+    `;
     return `
+      ${warmupChecklist}
+      ${restBanner}
       <div class="field">
         <label>Session type</label>
         <div class="toggle-pill">
@@ -707,6 +748,7 @@ function renderWorkoutBody(day) {
         </div>
       </div>
       ${w.boulder.sessionType ? `<div class="meal-item-macro" style="margin-bottom:10px;">${BOULDER_SESSION_GUIDANCE[w.boulder.sessionType]}</div>` : ""}
+      ${renderBoulderGrid(w.boulder.sessionType, w.boulder.grid)}
       <div class="field"><label>Session length (minutes)</label><input type="number" inputmode="numeric" data-action="setBoulderMinutes" value="${w.boulder.minutes}"></div>
       <h3 style="margin-top:16px; margin-bottom:8px;">Log a climb</h3>
       <div class="grade-grid">
@@ -1725,9 +1767,38 @@ document.getElementById("view-root").addEventListener("click", e => {
     day.workout.exercises[Number(el.dataset.ex)].sets.splice(Number(el.dataset.set), 1);
     saveState(); render(); return;
   }
+  if (action === "toggleWarmupStep") {
+    const idx = Number(el.dataset.idx);
+    const wasChecked = day.workout.boulder.warmupDone[idx];
+    day.workout.boulder.warmupDone[idx] = !wasChecked;
+    saveState();
+    const restAfter = CLIMBING_WARMUP_STEPS[idx].restAfter;
+    if (!wasChecked && restAfter > 0) startRestTimer(restAfter);
+    else render();
+    return;
+  }
   if (action === "setBoulderSessionType") {
-    day.workout.boulder.sessionType = el.dataset.type;
-    saveState(); render(); return;
+    const newType = el.dataset.type;
+    if (day.workout.boulder.sessionType !== newType) {
+      day.workout.boulder.sessionType = newType;
+      const config = BOULDER_GRID_CONFIG[newType];
+      day.workout.boulder.grid = config ? Array.from({ length: config.rows }, () => Array(config.cols).fill(null)) : [];
+      saveState();
+    }
+    render(); return;
+  }
+  if (action === "toggleGridCell") {
+    const r = Number(el.dataset.row), c = Number(el.dataset.col);
+    const grid = day.workout.boulder.grid;
+    const cur = grid[r][c];
+    const next = cur === null ? "done" : cur === "done" ? "fail" : null;
+    grid[r][c] = next;
+    saveState();
+    const config = BOULDER_GRID_CONFIG[day.workout.boulder.sessionType];
+    const shouldRest = next !== null && (config.restTrigger === "cell" || (config.restTrigger === "row" && grid[r].every(cell => cell !== null)));
+    if (shouldRest) startRestTimer(config.restSeconds);
+    else render();
+    return;
   }
   if (action === "logClimb") {
     day.workout.boulder.climbs.push({ grade: el.dataset.grade });
