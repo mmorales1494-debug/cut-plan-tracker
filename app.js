@@ -706,6 +706,7 @@ function renderWorkoutBody(day) {
           ${BOULDER_SESSION_TYPES.map(t => `<button data-action="setBoulderSessionType" data-type="${t}" class="${w.boulder.sessionType === t ? "active" : ""}">${t}</button>`).join("")}
         </div>
       </div>
+      ${w.boulder.sessionType ? `<div class="meal-item-macro" style="margin-bottom:10px;">${BOULDER_SESSION_GUIDANCE[w.boulder.sessionType]}</div>` : ""}
       <div class="field"><label>Session length (minutes)</label><input type="number" inputmode="numeric" data-action="setBoulderMinutes" value="${w.boulder.minutes}"></div>
       <h3 style="margin-top:16px; margin-bottom:8px;">Log a climb</h3>
       <div class="grade-grid">

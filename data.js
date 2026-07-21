@@ -146,6 +146,15 @@ const RESISTANCE_EXERCISES = [
 // training split so session type is tracked alongside minutes and the climb log.
 const BOULDER_SESSION_TYPES = ["Power/Limit", "Volume/Mileage", "Power-Endurance"];
 
+// Written for a full 1.5-2hr session, not just the core protocol — warm-up plus enough
+// rounds/volume to actually fill that time (the long rests in Power/Limit and Power-Endurance
+// do most of that work; Volume/Mileage fills it with total problem count instead).
+const BOULDER_SESSION_GUIDANCE = {
+  "Power/Limit": "Warm up 15-20 min, then work 6-8 problems at or just below your limit — 3-5 attempts each, full rest (3-5 min) between attempts and between problems. The long rests are what fill the 1.5-2hr session; quality over quantity, not pump.",
+  "Volume/Mileage": "Warm up 10-15 min, then climb continuously well below your limit for the rest of the session — aim for 30-50+ problems total, resting only long enough to catch your breath (~1 min) between climbs. This is about total mileage and movement quality, not max effort.",
+  "Power-Endurance": "Warm up 15-20 min, then run 2-3 full 4x4 circuits: 4 problems ~3 grades below your limit, each climbed 4x back-to-back with minimal rest, then ~4 min rest before the next round. Use a different set of 4 problems per circuit, with ~8-10 min rest between circuits. Favor steep, pumpy problems — avoid rest jugs.",
+};
+
 // Core work, paired with run days. Each has its own input type since they're logged differently:
 // reps = bodyweight sets x reps, duration = timed hold (seconds), weighted-reps = weight + reps.
 const CORE_EXERCISES = [
