@@ -26,6 +26,10 @@ const WORKOUT_KCAL_BONUS = { rest: 0, resistance: 150, run: 250, boulder: 300 };
 
 // Quick-log grade buttons for the bouldering climb log — V7+ catches anything harder.
 const CLIMBING_GRADES = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7+"];
+
+// Minimum days since the last finger-intensive session (bouldering or hangboard) before
+// suggesting extra pulling work on a resistance/run day — avoids stacking finger load.
+const FINGER_RECOVERY_DAYS = 2;
 // When a goal is set, protein/fat scale with bodyweight (standard cut guidance) and
 // carbs fill whatever calories are left, instead of staying at fixed manual grams.
 const PROTEIN_PER_LB_GOAL = 0.8;
@@ -41,6 +45,7 @@ function waterTargetFor(activity) {
 const REP_TARGET = { min: 8, max: 12 };
 const SET_TARGET = { min: 3, max: 4 };
 const WEIGHT_STEP_KG = 2.5;
+const DEFAULT_REST_SECONDS = 120;
 const KG_TO_LB = 2.20462;
 
 // Standard barbell + plate assumptions for the plate-loading calculator.

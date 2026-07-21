@@ -19,6 +19,7 @@ function defaultRoutine() {
     setTarget: { ...SET_TARGET },
     repTarget: { ...REP_TARGET },
     weightStepKg: WEIGHT_STEP_KG,
+    restSeconds: DEFAULT_REST_SECONDS,
   };
 }
 
@@ -38,6 +39,7 @@ function loadState() {
         r.exercises = r.exercises.map(ex => typeof ex === "string" ? { name: ex, barbell: false } : ex);
       });
       if (!parsed.routines.some(r => r.active)) parsed.routines[0].active = true;
+      parsed.routines.forEach(r => { if (r.restSeconds === undefined) r.restSeconds = DEFAULT_REST_SECONDS; });
       if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
       if (parsed.targets.carbs === undefined) parsed.targets.carbs = DEFAULT_TARGETS.carbs;
@@ -325,6 +327,7 @@ function renderMealSwipeCard(day) {
 let quickAddOpen = false;
 let editDefaultsOpen = false;
 let goalFormOpen = false;
+let bodyWeightEntryUnit = "lb"; // which unit the Body-weight field currently expects typed input in
 let goalFormSex = null; // live selection while the goal form is open, before it's saved
 
 function renderMealDefaultsEditor(mealName) {
@@ -421,6 +424,29 @@ function renderMealInner(day, mealName, title) {
       <button class="btn secondary" data-action="toggleEditDefaults" style="width:100%;">${editDefaultsOpen ? "Done editing defaults" : "Edit planned defaults"}</button>
       ${editDefaultsOpen ? renderMealDefaultsEditor(mealName) : ""}
     </div>`;
+}
+
+// Days since the most recent finger-intensive session (bouldering or a completed hangboard
+// timer run), so resistance/run days know whether it's safe to suggest more pulling work.
+function daysSinceFingerLoad() {
+  const dates = Object.entries(state.days)
+    .filter(([, d]) => d.workout.type === "boulder" || (d.hangboardSessions || 0) > 0)
+    .map(([k]) => k)
+    .sort();
+  if (!dates.length) return Infinity;
+  const last = dates[dates.length - 1];
+  return Math.floor((Date.parse(formatDateKey(new Date())) - Date.parse(last)) / 86400000);
+}
+
+function renderPullSuggestion(day) {
+  if (day.workout.type !== "resistance" && day.workout.type !== "run") return "";
+  if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return "";
+  return `
+    <div class="card">
+      <h2>Climbing Strength</h2>
+      <div class="meal-item-macro">Fingers are recovered — good day to tack on some pulling work: 3-5 sets of weighted pull-ups/hangs on the block, or 3×8-10 cable rows/lat pulldowns.</div>
+    </div>
+  `;
 }
 
 function renderToday(day) {
@@ -536,9 +562,18 @@ function renderToday(day) {
       </div>
     </div>
 
+    ${renderPullSuggestion(day)}
+
     <div class="card">
       <h2>Body</h2>
-      <div class="field"><label>Weight (lb)</label><input type="number" inputmode="decimal" step="0.1" data-action="setWeight" value="${day.weight ?? ""}"></div>
+      <div class="field">
+        <label>Weight (lb)</label>
+        <div class="toggle-pill" style="max-width:160px; margin-bottom:6px;">
+          <button data-action="setBodyWeightEntryUnit" data-unit="lb" class="${bodyWeightEntryUnit === "lb" ? "active" : ""}">lb</button>
+          <button data-action="setBodyWeightEntryUnit" data-unit="kg" class="${bodyWeightEntryUnit === "kg" ? "active" : ""}">kg</button>
+        </div>
+        <input type="number" inputmode="decimal" step="0.1" data-action="setWeight" value="${day.weight ?? ""}">
+      </div>
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
     </div>
   `;
@@ -604,7 +639,14 @@ function renderWorkoutBody(day) {
   if (w.type === "resistance") {
     const routine = routineForDay(day);
     const routineHeader = routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong></div>` : "";
-    return routineHeader + w.exercises.map((ex, exIdx) => {
+    const restBanner = restTimerRemaining > 0 ? `
+      <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
+        <div class="timer-phase">Resting</div>
+        <div class="timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
+        <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
+      </div>
+    ` : "";
+    return restBanner + routineHeader + w.exercises.map((ex, exIdx) => {
       const last = lastSessionFor(ex.name, viewDate);
       return `
       <div class="exercise-block">
@@ -772,7 +814,10 @@ function renderRoutineManager() {
           <div class="field"><label>Reps (min)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="repMin" value="${routine.repTarget.min}"></div>
           <div class="field"><label>Reps (max)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="repMax" value="${routine.repTarget.max}"></div>
         </div>
-        <div class="field"><label>Weight step (${state.weightUnit})</label><input type="number" inputmode="decimal" step="0.5" data-action="setRoutineField" data-routine="${routine.id}" data-field="weightStep" value="${toDisplayWeight(routine.weightStepKg)}"></div>
+        <div class="two-col">
+          <div class="field"><label>Weight step (${state.weightUnit})</label><input type="number" inputmode="decimal" step="0.5" data-action="setRoutineField" data-routine="${routine.id}" data-field="weightStep" value="${toDisplayWeight(routine.weightStepKg)}"></div>
+          <div class="field"><label>Rest between sets (sec)</label><input type="number" inputmode="numeric" step="5" data-action="setRoutineField" data-routine="${routine.id}" data-field="restSeconds" value="${routine.restSeconds}"></div>
+        </div>
         <h3 style="margin-top:10px;">Exercises</h3>
         ${exRows}
         <div class="add-item-row">
@@ -1202,6 +1247,37 @@ function releaseWakeLock() {
   }
 }
 
+// ---------- Resistance rest timer ----------
+
+let restTimerRemaining = 0; // seconds left; 0 = inactive
+let restTimerIntervalId = null;
+
+function startRestTimer(seconds) {
+  if (!seconds || seconds <= 0) return;
+  restTimerRemaining = seconds;
+  requestWakeLock();
+  if (restTimerIntervalId) clearInterval(restTimerIntervalId);
+  restTimerIntervalId = setInterval(() => {
+    restTimerRemaining -= 1;
+    if (restTimerRemaining <= 0) {
+      clearInterval(restTimerIntervalId);
+      restTimerIntervalId = null;
+      releaseWakeLock();
+      beep(880, 150);
+      setTimeout(() => beep(880, 250), 200);
+    }
+    if (currentTab === "today") render();
+  }, 1000);
+  if (currentTab === "today") render();
+}
+
+function skipRestTimer() {
+  if (restTimerIntervalId) { clearInterval(restTimerIntervalId); restTimerIntervalId = null; }
+  releaseWakeLock();
+  restTimerRemaining = 0;
+  if (currentTab === "today") render();
+}
+
 function startTimer() {
   if (timerPhase === null || timerPhase === "done") {
     timerCurrentSet = 1;
@@ -1248,6 +1324,10 @@ function finishTimer() {
   beep(660, 150);
   setTimeout(() => beep(660, 150), 200);
   setTimeout(() => beep(880, 250), 400);
+  // Record finger load for today so resistance/run days know to hold off suggesting more pulling work.
+  const today = getOrCreateDay(formatDateKey(new Date()));
+  today.hangboardSessions = (today.hangboardSessions || 0) + 1;
+  saveState();
   if (currentTab === "climbing") render();
 }
 
@@ -1501,6 +1581,7 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "startTimer") { startTimer(); return; }
   if (action === "pauseTimer") { pauseTimer(); return; }
   if (action === "resetTimer") { resetTimer(); return; }
+  if (action === "skipRestTimer") { skipRestTimer(); return; }
   if (action === "setWeightUnit") {
     state.weightUnit = el.dataset.unit;
     saveState(); render(); return;
@@ -1646,6 +1727,10 @@ document.getElementById("view-root").addEventListener("click", e => {
     saveState(); render(); return;
   }
   if (action === "exportData") { exportData(); return; }
+  if (action === "setBodyWeightEntryUnit") {
+    bodyWeightEntryUnit = el.dataset.unit;
+    render(); return;
+  }
   if (action === "toggleGoalForm") {
     goalFormOpen = !goalFormOpen;
     goalFormSex = null;
@@ -1707,6 +1792,7 @@ document.getElementById("view-root").addEventListener("input", e => {
     else if (field === "repMin") routine.repTarget.min = Number(el.value) || 0;
     else if (field === "repMax") routine.repTarget.max = Number(el.value) || 0;
     else if (field === "weightStep") routine.weightStepKg = toStorageWeight(el.value) || 0;
+    else if (field === "restSeconds") routine.restSeconds = Number(el.value) || 0;
     saveState();
     return;
   }
@@ -1742,6 +1828,18 @@ document.getElementById("view-root").addEventListener("change", e => {
   if (action === "mealAdd") {
     const id = el.value;
     if (id) { day.meals[el.dataset.meal][id] = 1; bumpItemUsage(id); saveState(); render(); }
+    return;
+  }
+  if (action === "setWeight") {
+    if (bodyWeightEntryUnit === "kg" && day.weight != null) {
+      day.weight = Math.round(day.weight * KG_TO_LB * 10) / 10;
+      saveState(); render();
+    }
+    return;
+  }
+  if (action === "setField" && el.dataset.field === "reps" && el.value !== "") {
+    const routine = routineForDay(day);
+    startRestTimer(routine.restSeconds || DEFAULT_REST_SECONDS);
     return;
   }
   if (action === "toggleRoutineExerciseBarbell") {
