@@ -400,6 +400,7 @@ let quickAddCoreOpen = false;
 let foodPickerOpen = false;
 let goalFormOpen = false;
 let bodyWeightEntryUnit = "lb"; // which unit the Body-weight field currently expects typed input in
+let waterEntryUnit = "oz"; // which unit the Water field currently expects typed input in
 let goalFormSex = null; // live selection while the goal form is open, before it's saved
 
 function renderMealDefaultsEditor(mealName) {
@@ -641,15 +642,25 @@ function renderToday(day) {
       <h2>Water</h2>
       <div class="water-track"><div class="water-fill" style="width:${waterPct}%"></div></div>
       <div class="field" style="margin-top:10px;">
-        <label>Ounces logged today</label>
+        <label>${waterEntryUnit === "ml" ? "Milliliters logged today" : "Ounces logged today"}</label>
+        <div class="toggle-pill" style="max-width:160px; margin-bottom:6px;">
+          <button data-action="setWaterEntryUnit" data-unit="oz" class="${waterEntryUnit === "oz" ? "active" : ""}">oz</button>
+          <button data-action="setWaterEntryUnit" data-unit="ml" class="${waterEntryUnit === "ml" ? "active" : ""}">ml</button>
+        </div>
         <input type="number" inputmode="decimal" step="1" data-action="setWaterOz" value="${waterOz}">
       </div>
       <div class="row" style="gap:8px;">
+        ${waterEntryUnit === "ml" ? `
+        <button class="btn secondary" data-action="waterAddMl" data-ml="250" style="flex:1;">+250 ml</button>
+        <button class="btn secondary" data-action="waterAddMl" data-ml="500" style="flex:1;">+500 ml</button>
+        <button class="btn secondary" data-action="waterAddMl" data-ml="600" style="flex:1;">+600 ml</button>
+        ` : `
         <button class="btn secondary" data-action="waterAdd" data-oz="8" style="flex:1;">+8 oz</button>
         <button class="btn secondary" data-action="waterAdd" data-oz="16" style="flex:1;">+16 oz</button>
         <button class="btn secondary" data-action="waterAdd" data-oz="20" style="flex:1;">+20 oz</button>
+        `}
       </div>
-      <div class="meal-item-macro" style="margin-top:6px;">target ${waterTargetOzMin}${waterTargetOzMin === waterTargetOzMax ? "" : `-${waterTargetOzMax}`} oz${day.workout.type === "boulder" ? " (bumped for bouldering)" : ""}</div>
+      <div class="meal-item-macro" style="margin-top:6px;">target ${waterEntryUnit === "ml" ? `${Math.round(waterTargetOzMin * ML_PER_OZ)}${waterTargetOzMin === waterTargetOzMax ? "" : `-${Math.round(waterTargetOzMax * ML_PER_OZ)}`} ml` : `${waterTargetOzMin}${waterTargetOzMin === waterTargetOzMax ? "" : `-${waterTargetOzMax}`} oz`}${day.workout.type === "boulder" ? " (bumped for bouldering)" : ""}</div>
     </div>
 
     <div class="card">
@@ -730,13 +741,20 @@ function renderCoreExerciseBlock(ex, exIdx) {
         ${ex.quickAdd ? `<button class="icon-btn" data-action="removeQuickAddCore" data-ex="${exIdx}">✕</button>` : ""}
       </div>
       <div class="meal-item-macro" style="margin-bottom:8px; margin-top:6px;">${coreTargetLabel(ex.type)}</div>
-      ${ex.sets.map((s, sIdx) => `
+      ${ex.sets.map((s, sIdx) => {
+        const isRunning = ex.type === "duration" && coreStopwatchKey === `${exIdx}-${sIdx}`;
+        const stopwatchHtml = ex.type !== "duration" ? "" : isRunning
+          ? `<button class="btn secondary" data-action="stopCoreStopwatch" data-ex="${exIdx}" data-set="${sIdx}" style="min-width:76px;">■ <span id="core-stopwatch-${exIdx}-${sIdx}">${formatMMSS(coreStopwatchElapsed)}</span></button>`
+          : `<button class="btn secondary" data-action="startCoreStopwatch" data-ex="${exIdx}" data-set="${sIdx}" style="min-width:76px;">▶ Start</button>`;
+        return `
         <div class="set-row-flex">
           <div class="set-num">${sIdx + 1}</div>
           ${fields.map(f => `<input type="number" inputmode="decimal" placeholder="${f.placeholder}" data-action="setCoreField" data-ex="${exIdx}" data-set="${sIdx}" data-field="${f.field}" value="${f.field === "weight" ? toDisplayWeight(s.weight) : (s[f.field] ?? "")}">`).join("")}
+          ${stopwatchHtml}
           <button class="remove-set" data-action="removeCoreSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
         </div>
-      `).join("")}
+      `;
+      }).join("")}
       <button class="btn secondary" data-action="addCoreSet" data-ex="${exIdx}">+ Add set</button>
     </div>
   `;
@@ -814,10 +832,14 @@ function renderWorkoutBody(day) {
         <button class="btn secondary" data-action="toggleQuickAddExercise" style="width:100%;">${quickAddExerciseOpen ? "Cancel" : "+ Quick add an exercise (one-time)"}</button>
         ${quickAddExerciseOpen ? `
           <div class="quick-add-form">
-            <div class="field"><label>Exercise name</label><input type="text" id="quickadd-exercise-name" placeholder="e.g. Cable Face Pull" list="known-exercise-names"></div>
-            <datalist id="known-exercise-names">
-              ${[...new Set([...RESISTANCE_EXERCISES, ...state.routines.flatMap(r => r.exercises.map(e => e.name))])].map(n => `<option value="${n}">`).join("")}
-            </datalist>
+            <div class="field"><label>Exercise name</label><input type="text" id="quickadd-exercise-name" placeholder="Search, or type a new exercise…" data-action="filterExercisePickList" autocomplete="off"></div>
+            <div class="food-pick-list" id="quickadd-exercise-pick-list" style="margin-bottom:10px;">
+              ${[...new Set([...RESISTANCE_EXERCISES, ...state.routines.flatMap(r => r.exercises.map(e => e.name))])].sort().map(n => `
+                <div class="food-pick-row" data-exercise-label="${n.toLowerCase()}">
+                  <button class="btn secondary food-pick-add" data-action="selectQuickAddExerciseName" data-name="${n}" style="width:100%;">${n}</button>
+                </div>
+              `).join("")}
+            </div>
             <label style="display:flex; align-items:center; gap:6px; margin-bottom:10px; font-size:12px; color:var(--text-dim);">
               <input type="checkbox" id="quickadd-exercise-barbell" style="width:auto;"> Barbell (plate calculator)
             </label>
@@ -1826,6 +1848,10 @@ function releaseWakeLock() {
 let restTimerRemaining = 0; // seconds left; 0 = inactive
 let restTimerIntervalId = null;
 
+let coreStopwatchKey = null; // `${exIdx}-${setIdx}` of the currently running stopwatch, or null
+let coreStopwatchElapsed = 0;
+let coreStopwatchIntervalId = null;
+
 function startRestTimer(seconds) {
   if (!seconds || seconds <= 0) return;
   restTimerRemaining = seconds;
@@ -2309,6 +2335,14 @@ document.getElementById("view-root").addEventListener("click", e => {
     day.water.oz = Math.max(0, (day.water.oz || 0) + Number(el.dataset.oz));
     saveState(); render(); return;
   }
+  if (action === "waterAddMl") {
+    day.water.oz = Math.max(0, Math.round(((day.water.oz || 0) + Number(el.dataset.ml) / ML_PER_OZ) * 10) / 10);
+    saveState(); render(); return;
+  }
+  if (action === "setWaterEntryUnit") {
+    waterEntryUnit = el.dataset.unit;
+    render(); return;
+  }
   if (action === "setWorkoutType") {
     const type = el.dataset.type;
     day.workout.type = type;
@@ -2342,6 +2376,11 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "toggleQuickAddExercise") {
     quickAddExerciseOpen = !quickAddExerciseOpen;
     render(); return;
+  }
+  if (action === "selectQuickAddExerciseName") {
+    const input = document.getElementById("quickadd-exercise-name");
+    if (input) input.value = el.dataset.name;
+    return;
   }
   if (action === "submitQuickAddExercise") {
     const name = document.getElementById("quickadd-exercise-name").value.trim();
@@ -2474,16 +2513,41 @@ document.getElementById("view-root").addEventListener("click", e => {
     day.workout.core[Number(el.dataset.ex)].sets.splice(Number(el.dataset.set), 1);
     saveState(); render(); return;
   }
+  if (action === "startCoreStopwatch") {
+    const exIdx = Number(el.dataset.ex), setIdx = Number(el.dataset.set);
+    if (coreStopwatchIntervalId) clearInterval(coreStopwatchIntervalId);
+    coreStopwatchKey = `${exIdx}-${setIdx}`;
+    coreStopwatchElapsed = 0;
+    coreStopwatchIntervalId = setInterval(() => {
+      coreStopwatchElapsed += 1;
+      const clockEl = document.getElementById(`core-stopwatch-${exIdx}-${setIdx}`);
+      if (clockEl) clockEl.textContent = formatMMSS(coreStopwatchElapsed);
+    }, 1000);
+    render(); return;
+  }
+  if (action === "stopCoreStopwatch") {
+    const exIdx = Number(el.dataset.ex), setIdx = Number(el.dataset.set);
+    if (coreStopwatchIntervalId) { clearInterval(coreStopwatchIntervalId); coreStopwatchIntervalId = null; }
+    const ex = day.workout.core[exIdx];
+    if (ex && ex.sets[setIdx]) ex.sets[setIdx].seconds = coreStopwatchElapsed;
+    coreStopwatchKey = null;
+    coreStopwatchElapsed = 0;
+    saveState(); render(); return;
+  }
   if (action === "toggleSupplement") {
     day.supplements[el.dataset.id] = !day.supplements[el.dataset.id];
     saveState(); render(); return;
   }
   if (action === "addChecklistItem") { addChecklistItemFromInput(); return; }
   if (action === "removeChecklistItem") {
+    const item = state.checklistItems.find(s => s.id === el.dataset.id);
+    if (item && !confirm(`Delete "${item.label}" from your checklist?`)) return;
     state.checklistItems = state.checklistItems.filter(s => s.id !== el.dataset.id);
     saveState(); render(); return;
   }
   if (action === "completeOneTimeItem") {
+    const item = state.checklistItems.find(s => s.id === el.dataset.id);
+    if (item && !confirm(`Check off "${item.label}"? It's a one-time item and will be removed for good.`)) return;
     state.checklistItems = state.checklistItems.filter(s => s.id !== el.dataset.id);
     saveState(); render(); return;
   }
@@ -2553,6 +2617,14 @@ document.getElementById("view-root").addEventListener("input", e => {
     });
     return;
   }
+  if (action === "filterExercisePickList") {
+    const query = el.value.toLowerCase();
+    const list = document.getElementById("quickadd-exercise-pick-list");
+    if (list) list.querySelectorAll(".food-pick-row").forEach(row => {
+      row.style.display = row.dataset.exerciseLabel.includes(query) ? "" : "none";
+    });
+    return;
+  }
   if (action === "setTimerField") {
     const field = el.dataset.field;
     timerConfig[field] = Number(el.value);
@@ -2607,6 +2679,13 @@ document.getElementById("view-root").addEventListener("change", e => {
   if (action === "setWeight") {
     if (bodyWeightEntryUnit === "kg" && day.weight != null) {
       day.weight = Math.round(day.weight * KG_TO_LB * 10) / 10;
+      saveState(); render();
+    }
+    return;
+  }
+  if (action === "setWaterOz") {
+    if (waterEntryUnit === "ml") {
+      day.water.oz = Math.round((day.water.oz / ML_PER_OZ) * 10) / 10;
       saveState(); render();
     }
     return;
