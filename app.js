@@ -396,6 +396,7 @@ function renderMealSwipeCard(day) {
 let quickAddOpen = false;
 let editDefaultsOpen = false;
 let quickAddExerciseOpen = false;
+let quickAddCoreOpen = false;
 let foodPickerOpen = false;
 let goalFormOpen = false;
 let bodyWeightEntryUnit = "lb"; // which unit the Body-weight field currently expects typed input in
@@ -724,8 +725,11 @@ function renderCoreExerciseBlock(ex, exIdx) {
   const fields = coreFieldsFor(ex.type);
   return `
     <div class="exercise-block">
-      <h3>${ex.name}</h3>
-      <div class="meal-item-macro" style="margin-bottom:8px;">${coreTargetLabel(ex.type)}</div>
+      <div class="row">
+        <h3 style="margin:0;">${ex.name}${ex.quickAdd ? ` <span class="recurring-tag">one-time</span>` : ""}</h3>
+        ${ex.quickAdd ? `<button class="icon-btn" data-action="removeQuickAddCore" data-ex="${exIdx}">✕</button>` : ""}
+      </div>
+      <div class="meal-item-macro" style="margin-bottom:8px; margin-top:6px;">${coreTargetLabel(ex.type)}</div>
       ${ex.sets.map((s, sIdx) => `
         <div class="set-row-flex">
           <div class="set-num">${sIdx + 1}</div>
@@ -762,6 +766,7 @@ function renderBoulderGrid(sessionType, grid) {
         </div>
       </div>
     `).join("")}
+    <button class="btn secondary" data-action="addGridRow" style="width:100%; margin-top:8px;">+ Extra ${config.rowLabel.toLowerCase()} (got more in the tank)</button>
   `;
 }
 
@@ -839,6 +844,23 @@ function renderWorkoutBody(day) {
       <div class="meal-item-macro" style="margin-bottom:10px;">10-15 min total, progressive — add reps/time/weight weekly</div>
       ${restBanner}
       ${w.core.map((ex, exIdx) => renderCoreExerciseBlock(ex, exIdx)).join("")}
+      <div style="margin-top:8px;">
+        <button class="btn secondary" data-action="toggleQuickAddCore" style="width:100%;">${quickAddCoreOpen ? "Cancel" : "+ Quick add a core exercise (one-time)"}</button>
+        ${quickAddCoreOpen ? `
+          <div class="quick-add-form">
+            <div class="field"><label>Exercise name</label><input type="text" id="quickadd-core-name" placeholder="e.g. Side Plank"></div>
+            <div class="field">
+              <label>Type</label>
+              <select id="quickadd-core-type">
+                <option value="reps">Reps (bodyweight)</option>
+                <option value="duration">Duration (timed hold)</option>
+                <option value="weighted-reps">Weighted reps</option>
+              </select>
+            </div>
+            <button class="btn" data-action="submitQuickAddCore" style="width:100%;">Add for today</button>
+          </div>
+        ` : ""}
+      </div>
     `;
   }
   if (w.type === "boulder") {
@@ -2333,6 +2355,22 @@ document.getElementById("view-root").addEventListener("click", e => {
     day.workout.exercises.splice(Number(el.dataset.ex), 1);
     saveState(); render(); return;
   }
+  if (action === "toggleQuickAddCore") {
+    quickAddCoreOpen = !quickAddCoreOpen;
+    render(); return;
+  }
+  if (action === "submitQuickAddCore") {
+    const name = document.getElementById("quickadd-core-name").value.trim();
+    if (!name) return;
+    const type = document.getElementById("quickadd-core-type").value;
+    day.workout.core.push({ name, type, sets: [], quickAdd: true });
+    quickAddCoreOpen = false;
+    saveState(); render(); return;
+  }
+  if (action === "removeQuickAddCore") {
+    day.workout.core.splice(Number(el.dataset.ex), 1);
+    saveState(); render(); return;
+  }
   if (action === "removeSet") {
     const exIdx = Number(el.dataset.ex), setIdx = Number(el.dataset.set);
     const ex = day.workout.exercises[exIdx];
@@ -2360,6 +2398,11 @@ document.getElementById("view-root").addEventListener("click", e => {
       saveState();
     }
     render(); return;
+  }
+  if (action === "addGridRow") {
+    const config = BOULDER_GRID_CONFIG[day.workout.boulder.sessionType];
+    if (config) day.workout.boulder.grid.push(Array(config.cols).fill(null));
+    saveState(); render(); return;
   }
   if (action === "toggleGridCell") {
     const r = Number(el.dataset.row), c = Number(el.dataset.col);
