@@ -6,6 +6,7 @@ const PHOTO_STORE = "photos";
 
 let state = loadState();
 let currentTab = "today";
+let tabBeforeSettings = "today"; // quick tab to return to when leaving Settings
 let viewDate = formatDateKey(new Date());
 document.documentElement.setAttribute("data-theme", state.theme);
 
@@ -322,6 +323,7 @@ function render() {
   else if (currentTab === "workouts") html = renderWorkouts();
   else if (currentTab === "progress") html = renderProgressShell();
   else if (currentTab === "climbing") html = renderClimbing();
+  else if (currentTab === "settings") html = renderSettings();
 
   const undoBanner = lastDeleted ? `
     <div class="undo-banner">
@@ -906,7 +908,6 @@ function scheduledActivityLabel(scheduled) {
   return scheduled === null ? "Flexible / make-up day" : activityLabel(scheduled);
 }
 
-let scheduleEditOpen = false;
 const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const DOW_LABELS = { 0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday", 6: "Saturday" };
 const SCHEDULE_OPTIONS = [
@@ -949,13 +950,8 @@ function renderUpcomingSchedule(daysAhead) {
   }
   return `
     <div class="card">
-      <div class="row">
-        <h2 style="margin:0;">Upcoming schedule</h2>
-        <button class="btn secondary" data-action="toggleScheduleEdit">${scheduleEditOpen ? "Done" : "Edit schedule"}</button>
-      </div>
-      ${scheduleEditOpen
-        ? `<div class="meal-item-macro" style="margin:10px 0;">Sets the recurring weekly pattern going forward. Days you've already logged won't change.</div>${renderScheduleEditor()}`
-        : rows.join("")}
+      <h2>Upcoming schedule</h2>
+      ${rows.join("")}
     </div>
   `;
 }
@@ -1115,15 +1111,14 @@ function renderWorkouts() {
 
   return `
     ${renderUpcomingSchedule(14)}
-    ${renderWeeklyReportCard()}
     ${renderDeloadReminder()}
-    ${renderGradePyramid()}
     ${renderRoutineManager()}
     <div class="card">
       <h2>Resistance progression</h2>
       <input type="text" placeholder="Filter exercises…" data-action="filterExerciseList">
     </div>
     ${renderResistanceProgression()}
+    ${renderTonnageChart()}
     <div class="card"><h2>Run / boulder log</h2>${cardioTable}</div>
   `;
 }
@@ -1302,19 +1297,28 @@ function renderProgressShell() {
       <h2>Weight trend</h2>
       <div id="weight-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
     </div>
-    ${renderClimbingProgressChart()}
-    ${renderTonnageChart()}
     <div class="card">
       <h2>Photos</h2>
       <input type="file" accept="image/*" capture="environment" data-action="addPhoto" style="margin-bottom:10px;">
       <div id="photo-grid-slot" class="photo-grid"></div>
     </div>
+  `;
+}
+
+function renderSettings() {
+  return `
+    <button class="btn secondary" data-action="backFromSettings" style="margin-bottom:12px;">← Back</button>
     <div class="card">
       <h2>Appearance</h2>
       <div class="toggle-pill">
         <button data-action="setTheme" data-theme="dark" class="${state.theme === "dark" ? "active" : ""}">Dark</button>
         <button data-action="setTheme" data-theme="light" class="${state.theme === "light" ? "active" : ""}">Light</button>
       </div>
+    </div>
+    <div class="card">
+      <h2>Weekly schedule</h2>
+      <div class="meal-item-macro" style="margin-bottom:10px;">Sets the recurring weekly pattern going forward. Days you've already logged won't change.</div>
+      ${renderScheduleEditor()}
     </div>
     <div class="card">
       <h2>Backup</h2>
@@ -1996,6 +2000,9 @@ function renderClimbing() {
             : `<button class="btn" data-action="startTimer" style="flex:1;">Resume</button><button class="btn secondary" data-action="resetTimer" style="flex:1;">Reset</button>`}
       </div>
     </div>
+    ${renderWeeklyReportCard()}
+    ${renderGradePyramid()}
+    ${renderClimbingProgressChart()}
   `;
 }
 
@@ -2008,12 +2015,22 @@ document.getElementById("bottom-nav").addEventListener("click", e => {
   render();
 });
 
+document.getElementById("settings-btn").addEventListener("click", () => {
+  if (currentTab !== "settings") tabBeforeSettings = currentTab;
+  currentTab = "settings";
+  render();
+});
+
 document.getElementById("view-root").addEventListener("click", e => {
   const el = e.target.closest("[data-action]");
   if (!el) return;
   const action = el.dataset.action;
   const day = getOrCreateDay(viewDate);
 
+  if (action === "backFromSettings") {
+    currentTab = tabBeforeSettings;
+    render(); return;
+  }
   if (action === "navDay") {
     viewDate = addDays(viewDate, Number(el.dataset.delta));
     mealTabIndex = 0;
@@ -2129,10 +2146,6 @@ document.getElementById("view-root").addEventListener("click", e => {
     const id = select.value;
     if (id) { state.mealTemplates[mealName][id] = 1; bumpItemUsage(id); saveState(); render(); }
     return;
-  }
-  if (action === "toggleScheduleEdit") {
-    scheduleEditOpen = !scheduleEditOpen;
-    render(); return;
   }
   if (action === "setClimbingMode") {
     climbingMode = el.dataset.mode;

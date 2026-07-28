@@ -69,6 +69,15 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-right .icon-btn {
+  font-size: 15px;
+}
+
 #view-root {
   flex: 1;
   overflow-y: auto;
