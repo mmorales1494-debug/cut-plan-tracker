@@ -7,6 +7,7 @@ const PHOTO_STORE = "photos";
 let state = loadState();
 let currentTab = "today";
 let viewDate = formatDateKey(new Date());
+document.documentElement.setAttribute("data-theme", state.theme);
 
 // ---------- persistence ----------
 
@@ -50,13 +51,19 @@ function loadState() {
       if (parsed.nextRoutineIndex === undefined) parsed.nextRoutineIndex = 0;
       if (parsed.targets.fat === undefined) parsed.targets.fat = DEFAULT_TARGETS.fat;
       if (parsed.targets.carbs === undefined) parsed.targets.carbs = DEFAULT_TARGETS.carbs;
+      if (parsed.targets.fiber === undefined) parsed.targets.fiber = DEFAULT_TARGETS.fiber;
       for (const item of Object.values(parsed.customItems)) {
         if (item.fat === undefined) item.fat = 0;
         if (item.carbs === undefined) item.carbs = 0;
+        if (item.fiber === undefined) item.fiber = 0;
       }
       if (!parsed.customPresets) parsed.customPresets = [];
       if (parsed.goal === undefined) parsed.goal = null;
       if (!parsed.itemUsage) parsed.itemUsage = {};
+      if (!parsed.favoriteItems) parsed.favoriteItems = {};
+      if (!parsed.theme) parsed.theme = "dark";
+      if (!parsed.exerciseNotes) parsed.exerciseNotes = {};
+      if (parsed.lastDeloadDate === undefined) parsed.lastDeloadDate = null;
       if (parsed.lastExportAt === undefined) parsed.lastExportAt = null;
       // backward compat: water used to be logged in quarter-bottles, now plain ounces;
       // bouldering sessions used to only track minutes, now also a per-climb grade log
@@ -110,11 +117,18 @@ function loadState() {
     goal: null,
     itemUsage: {},
     lastExportAt: null,
+    favoriteItems: {},
+    theme: "dark",
+    exerciseNotes: {},
+    lastDeloadDate: null,
   };
 }
 
+let dataVersion = 0; // bumped on every save; aggregate calculations cache against this
+
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  dataVersion++;
 }
 
 // ---------- date helpers ----------
@@ -249,7 +263,7 @@ function workoutStatusLabel(day) {
 }
 
 function mealTotals(meal) {
-  let cal = 0, protein = 0, fat = 0, carbs = 0;
+  let cal = 0, protein = 0, fat = 0, carbs = 0, fiber = 0;
   for (const [id, qty] of Object.entries(meal)) {
     const item = itemDef(id);
     if (!item || !qty) continue;
@@ -257,23 +271,45 @@ function mealTotals(meal) {
     protein += item.protein * qty;
     fat += (item.fat || 0) * qty;
     carbs += (item.carbs || 0) * qty;
+    fiber += (item.fiber || 0) * qty;
   }
-  return { cal, protein, fat, carbs };
+  return { cal, protein, fat, carbs, fiber };
 }
 
 function dayTotals(day) {
-  let cal = 0, protein = 0, fat = 0, carbs = 0;
+  let cal = 0, protein = 0, fat = 0, carbs = 0, fiber = 0;
   for (const mealName of Object.keys(day.meals)) {
     const t = mealTotals(day.meals[mealName]);
     cal += t.cal;
     protein += t.protein;
     fat += t.fat;
     carbs += t.carbs;
+    fiber += t.fiber;
   }
-  return { cal, protein, fat, carbs };
+  return { cal, protein, fat, carbs, fiber };
 }
 
 // ---------- rendering shell ----------
+
+// ---------- undo-on-delete ----------
+
+let lastDeleted = null; // { message, restore() } — the most recent undoable delete, or null
+let lastDeletedTimeoutId = null;
+
+function recordUndo(message, restore) {
+  lastDeleted = { message, restore };
+  if (lastDeletedTimeoutId) clearTimeout(lastDeletedTimeoutId);
+  lastDeletedTimeoutId = setTimeout(() => { lastDeleted = null; render(); }, 6000);
+}
+
+function undoLastDelete() {
+  if (!lastDeleted) return;
+  lastDeleted.restore();
+  lastDeleted = null;
+  if (lastDeletedTimeoutId) { clearTimeout(lastDeletedTimeoutId); lastDeletedTimeoutId = null; }
+  saveState();
+  render();
+}
 
 function render() {
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === currentTab));
@@ -281,10 +317,19 @@ function render() {
   const day = getOrCreateDay(viewDate);
   document.getElementById("day-counter").textContent = niceDate(viewDate);
 
-  if (currentTab === "today") root.innerHTML = renderToday(day);
-  else if (currentTab === "workouts") root.innerHTML = renderWorkouts();
-  else if (currentTab === "progress") root.innerHTML = renderProgressShell();
-  else if (currentTab === "climbing") root.innerHTML = renderClimbing();
+  let html = "";
+  if (currentTab === "today") html = renderToday(day);
+  else if (currentTab === "workouts") html = renderWorkouts();
+  else if (currentTab === "progress") html = renderProgressShell();
+  else if (currentTab === "climbing") html = renderClimbing();
+
+  const undoBanner = lastDeleted ? `
+    <div class="undo-banner">
+      <span>${lastDeleted.message}</span>
+      <button class="btn secondary" data-action="undoLastDelete">Undo</button>
+    </div>
+  ` : "";
+  root.innerHTML = undoBanner + html;
 
   if (currentTab === "progress") hydrateProgress();
 }
@@ -332,11 +377,14 @@ let mealTabIndex = 0;
 
 function renderMealSwipeCard(day) {
   const mealName = MEAL_ORDER[mealTabIndex];
+  const yesterdayKey = formatDateKey(new Date(parseKey(viewDate).getTime() - 86400000));
+  const hasYesterday = !!state.days[yesterdayKey];
   return `
     <div class="card">
       <div class="toggle-pill">
         ${MEAL_ORDER.map((m, i) => `<button data-action="setMealTab" data-idx="${i}" class="${i === mealTabIndex ? "active" : ""}">${MEAL_TAB_LABELS[m]}</button>`).join("")}
       </div>
+      ${hasYesterday ? `<button class="btn secondary" data-action="copyYesterdayMeals" style="width:100%; margin-top:8px;">Copy yesterday's meals</button>` : ""}
       <div class="meal-swipe-area" data-swipe="meal" style="margin-top:12px;">
         ${renderMealInner(day, mealName, MEAL_TITLES[mealName])}
       </div>
@@ -345,6 +393,7 @@ function renderMealSwipeCard(day) {
 
 let quickAddOpen = false;
 let editDefaultsOpen = false;
+let foodPickerOpen = false;
 let goalFormOpen = false;
 let bodyWeightEntryUnit = "lb"; // which unit the Body-weight field currently expects typed input in
 let goalFormSex = null; // live selection while the goal form is open, before it's saved
@@ -408,20 +457,32 @@ function renderMealInner(day, mealName, title) {
   }).join("") : `<div class="empty-state">Nothing planned — add an item below</div>`;
 
   const allIds = [...Object.keys(ITEM_CATALOG), ...Object.keys(state.customItems)];
-  const notInMeal = sortByUsage(allIds.filter(id => !(id in meal)));
-  const options = notInMeal.map(id => `<option value="${id}">${itemDef(id).label}</option>`).join("");
+  const favorites = state.favoriteItems || {};
+  const notInMeal = sortByUsage(allIds.filter(id => !(id in meal)))
+    .slice()
+    .sort((a, b) => (favorites[b] ? 1 : 0) - (favorites[a] ? 1 : 0));
   const hasTemplate = Object.keys(template).length > 0;
 
   return `
     <div class="row"><h3>${title}</h3><span class="meal-item-macro">${totals.cal} cal · ${totals.protein}g P · ${round1(totals.carbs)}g C · ${round1(totals.fat)}g F</span></div>
     ${rows}
     <div class="add-item-row" style="display:flex; gap:8px;">
-      <select data-action="mealAdd" data-meal="${mealName}" style="flex:1;">
-        <option value="">+ add item…</option>
-        ${options}
-      </select>
+      <button class="btn secondary" data-action="toggleFoodPicker" style="flex:1;">${foodPickerOpen ? "Close" : "+ add item…"}</button>
       ${hasTemplate ? `<button class="btn secondary" data-action="mealLogPlanned" data-meal="${mealName}">Log as planned</button>` : ""}
     </div>
+    ${foodPickerOpen ? `
+      <div class="quick-add-form">
+        <input type="text" placeholder="Search foods…" data-action="filterFoodList" data-meal="${mealName}" style="margin-bottom:8px;">
+        <div class="food-pick-list" id="food-pick-list-${mealName}">
+          ${notInMeal.map(id => `
+            <div class="food-pick-row" data-food-label="${itemDef(id).label.toLowerCase()}">
+              <button class="star-btn ${favorites[id] ? "active" : ""}" data-action="toggleFavoriteItem" data-id="${id}">${favorites[id] ? "★" : "☆"}</button>
+              <button class="btn secondary food-pick-add" data-action="mealAddItem" data-meal="${mealName}" data-id="${id}">${itemDef(id).label}</button>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
     <div style="margin-top:8px;">
       <button class="btn secondary" data-action="toggleQuickAdd" style="width:100%;">${quickAddOpen ? "Cancel quick add" : "+ Quick add by macros"}</button>
       ${quickAddOpen ? `
@@ -468,6 +529,29 @@ function renderPullSuggestion(day) {
   `;
 }
 
+// Current/longest streak of logging any food at all, across every day (not just scheduled
+// training days) — mirrors climbingStreaks() but for daily nutrition logging habit.
+function nutritionLoggingStreaks() {
+  const startDate = parseKey(state.meta.startDate);
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const hits = [];
+  for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+    const day = state.days[formatDateKey(d)];
+    hits.push(!!(day && Object.values(day.meals).some(meal => Object.values(meal).some(qty => qty > 0))));
+  }
+  let longest = 0, running = 0;
+  for (const h of hits) {
+    if (h) { running++; longest = Math.max(longest, running); }
+    else running = 0;
+  }
+  let current = 0;
+  for (let i = hits.length - 1; i >= 0; i--) {
+    if (hits[i]) current++; else break;
+  }
+  return { current, longest };
+}
+
 function renderToday(day) {
   const totals = dayTotals(day);
   const calTarget = calorieTargetFor(day) ?? (isTrainingDay(day) ? state.targets.calTrain : state.targets.calRest);
@@ -501,6 +585,7 @@ function renderToday(day) {
         <h2 style="margin:0;">Nutrition</h2>
         ${day.completed ? `<span class="meal-item-macro">✓ Complete</span>` : ""}
       </div>
+      ${nutritionLoggingStreaks().current > 0 ? `<div class="meal-item-macro">🔥 ${nutritionLoggingStreaks().current} day logging streak</div>` : ""}
       <div class="ring-row">
         ${rings.map(r => `
           <div class="ring-item">
@@ -510,6 +595,7 @@ function renderToday(day) {
           </div>
         `).join("")}
       </div>
+      <div class="meal-item-macro" style="margin-top:6px;">Fiber: ${round1(totals.fiber)}/${state.targets.fiber}g</div>
       <div class="pill-row">
         <div class="activity-chip">Workout — ${workoutStatusLabel(day)}</div>
         <div class="activity-chip">${(day.steps || 0).toLocaleString()} steps</div>
@@ -596,6 +682,13 @@ function renderToday(day) {
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
     </div>
   `;
+}
+
+// Ramp-up warm-up sets (40/60/80% of the working weight) before a barbell lift's
+// working sets, rounded to a plate-friendly 2.5 increment.
+function warmupSetSuggestions(workingWeightKg) {
+  if (!workingWeightKg) return [];
+  return [0.4, 0.6, 0.8].map(pct => Math.round((workingWeightKg * pct) / 2.5) * 2.5);
 }
 
 function lastSessionFor(name, beforeKey) {
@@ -686,8 +779,10 @@ function renderWorkoutBody(day) {
       return `
       <div class="exercise-block">
         <h3>${ex.name}</h3>
+        <input type="text" placeholder="Add a cue/note…" data-action="setExerciseNote" data-name="${ex.name}" value="${state.exerciseNotes[ex.name] || ""}" style="font-size:12px; padding:6px 8px; margin-bottom:8px;">
         <div class="meal-item-macro">Target: ${routine.setTarget.min}-${routine.setTarget.max} sets × ${routine.repTarget.min}-${routine.repTarget.max} reps</div>
         <div class="meal-item-macro" style="margin-bottom:8px;">${progressionNote(last, routine)}</div>
+        ${ex.barbell && last ? `<div class="meal-item-macro" style="margin-bottom:8px;">Warm-up ramp: ${warmupSetSuggestions(last.weight).map(w => formatKgLb(w)).join(" → ")} → ${formatKgLb(last.weight)} working</div>` : ""}
         ${ex.sets.map((s, sIdx) => `
           <div class="set-row">
             <div class="set-num">${sIdx + 1}</div>
@@ -697,7 +792,10 @@ function renderWorkoutBody(day) {
           </div>
           ${ex.barbell ? `<div data-plate-for="${exIdx}-${sIdx}">${renderPlateCalc(s.weight)}</div>` : ""}
         `).join("")}
-        <button class="btn secondary" data-action="addSet" data-ex="${exIdx}">+ Add set</button>
+        <div class="row" style="gap:8px;">
+          <button class="btn secondary" data-action="addSet" data-ex="${exIdx}" style="flex:1;">+ Add set</button>
+          ${ex.sets.length ? `<button class="btn secondary" data-action="repeatLastSet" data-ex="${exIdx}" style="flex:1;">Repeat last set</button>` : ""}
+        </div>
       </div>
     `;
     }).join("");
@@ -940,14 +1038,22 @@ function renderRoutineManager() {
   `;
 }
 
+// Epley formula estimate; weight/output stay in whatever unit the input weight is (kg internally).
+function estimated1RM(weight, reps) {
+  return Math.round(weight * (1 + reps / 30) * 10) / 10;
+}
+
 function renderExerciseProgressionCard(name) {
   const rows = collectExerciseHistory(name);
   const recent = rows.slice(-8).reverse();
-  const chart = rows.length > 1 ? lineChartSVG([rows.map(r => ({ x: r.dateKey, y: r.weight }))], ["#4fd1c5"]) : "";
+  const weightPoints = rows.map(r => ({ x: r.dateKey, y: r.weight }));
+  const oneRMPoints = rows.map(r => ({ x: r.dateKey, y: estimated1RM(r.weight, r.reps) }));
+  const chart = rows.length > 1 ? lineChartSVG([weightPoints, oneRMPoints], ["#4fd1c5", "#EF9F27"]) : "";
+  const latest1RM = rows.length ? oneRMPoints[oneRMPoints.length - 1].y : null;
   return `
-    <div class="card">
+    <div class="card" data-exercise-name="${name.toLowerCase()}">
       <h3>${name}</h3>
-      ${chart ? `<div class="chart-wrap">${chart}</div>` : ""}
+      ${chart ? `<div class="meal-item-macro" style="margin-bottom:4px;">Top set (teal) vs. estimated 1RM (orange)${latest1RM != null ? ` — currently ~${formatKgLb(latest1RM)}` : ""}</div><div class="chart-wrap">${chart}</div>` : ""}
       ${recent.length ? `
         <table class="hist-table">
           <tr><th>Date</th><th>Top set</th><th>Sets</th></tr>
@@ -1010,9 +1116,13 @@ function renderWorkouts() {
   return `
     ${renderUpcomingSchedule(14)}
     ${renderWeeklyReportCard()}
+    ${renderDeloadReminder()}
     ${renderGradePyramid()}
     ${renderRoutineManager()}
-    <div class="card"><h2>Resistance progression</h2></div>
+    <div class="card">
+      <h2>Resistance progression</h2>
+      <input type="text" placeholder="Filter exercises…" data-action="filterExerciseList">
+    </div>
     ${renderResistanceProgression()}
     <div class="card"><h2>Run / boulder log</h2>${cardioTable}</div>
   `;
@@ -1131,6 +1241,60 @@ function renderClimbingProgressChart() {
   `;
 }
 
+function sessionTonnage(day) {
+  let tonnage = 0;
+  for (const ex of day.workout.exercises) {
+    for (const s of ex.sets) {
+      tonnage += (toDisplayWeight(s.weight) || 0) * (Number(s.reps) || 0);
+    }
+  }
+  return Math.round(tonnage);
+}
+
+function tonnageSeries() {
+  return Object.entries(state.days)
+    .filter(([, d]) => d.workout.type === "resistance")
+    .map(([k, d]) => ({ x: k, y: sessionTonnage(d) }))
+    .filter(p => p.y > 0)
+    .sort((a, b) => a.x.localeCompare(b.x));
+}
+
+// Weeks since the last marked deload (or since the plan started, if never marked).
+// Manual rather than auto-detected from tonnage — inferring "lightness" from noisy
+// session-to-session tonnage swings would be unreliable; a one-tap marker is honest.
+function weeksSinceDeload() {
+  const base = state.lastDeloadDate || state.meta.startDate;
+  const days = Math.floor((Date.now() - parseKey(base).getTime()) / 86400000);
+  return Math.floor(days / 7);
+}
+
+function renderDeloadReminder() {
+  const weeks = weeksSinceDeload();
+  if (weeks < 6) return "";
+  return `
+    <div class="card">
+      <h2>Deload check-in</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">It's been ${weeks} weeks since your last lighter week — a deload roughly every 4-8 weeks helps avoid chronic under-recovery.</div>
+      <button class="btn secondary" data-action="markDeload" style="width:100%;">Mark this week as a deload</button>
+    </div>
+  `;
+}
+
+function renderTonnageChart() {
+  const series = tonnageSeries();
+  if (series.length < 2) {
+    return `<div class="card"><h2>Training volume</h2><div class="empty-state">Log at least 2 resistance sessions to see a trend</div></div>`;
+  }
+  const latest = series[series.length - 1];
+  return `
+    <div class="card">
+      <h2>Training volume</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">Total weight × reps per session (${state.weightUnit}) — latest: ${latest.y.toLocaleString()}</div>
+      <div class="chart-wrap">${lineChartSVG([series], ["#378ADD"])}</div>
+    </div>
+  `;
+}
+
 function renderProgressShell() {
   return `
     ${renderGoalCard()}
@@ -1139,10 +1303,18 @@ function renderProgressShell() {
       <div id="weight-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
     </div>
     ${renderClimbingProgressChart()}
+    ${renderTonnageChart()}
     <div class="card">
       <h2>Photos</h2>
       <input type="file" accept="image/*" capture="environment" data-action="addPhoto" style="margin-bottom:10px;">
       <div id="photo-grid-slot" class="photo-grid"></div>
+    </div>
+    <div class="card">
+      <h2>Appearance</h2>
+      <div class="toggle-pill">
+        <button data-action="setTheme" data-theme="dark" class="${state.theme === "dark" ? "active" : ""}">Dark</button>
+        <button data-action="setTheme" data-theme="light" class="${state.theme === "light" ? "active" : ""}">Light</button>
+      </div>
     </div>
     <div class="card">
       <h2>Backup</h2>
@@ -1154,19 +1326,72 @@ function renderProgressShell() {
           <input type="file" accept="application/json" data-action="importData" style="display:none;">
         </label>
       </div>
+      <button class="btn secondary" data-action="exportCSV" style="width:100%; margin-top:8px;">Export CSV (weight/nutrition history)</button>
+    </div>
+    <div class="card">
+      <h2>Storage</h2>
+      ${renderStorageHealth()}
     </div>
   `;
 }
 
+function storageStats() {
+  const json = JSON.stringify(state);
+  return { sizeKB: Math.round((json.length / 1024) * 10) / 10, dayCount: Object.keys(state.days).length };
+}
+
+function oldDayKeys(monthsBack = 6) {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - monthsBack);
+  const cutoffKey = formatDateKey(cutoff);
+  return Object.keys(state.days).filter(k => k < cutoffKey);
+}
+
+function renderStorageHealth() {
+  const stats = storageStats();
+  const oldKeys = oldDayKeys(6);
+  return `
+    <div class="meal-item-macro" style="margin-bottom:8px;">Storing ${stats.dayCount} day${stats.dayCount === 1 ? "" : "s"} of history (~${stats.sizeKB} KB).</div>
+    ${oldKeys.length
+      ? `<button class="btn secondary" data-action="archiveOldDays" style="width:100%;">Archive & remove ${oldKeys.length} day${oldKeys.length === 1 ? "" : "s"} older than 6 months</button>`
+      : `<div class="meal-item-macro">No data older than 6 months yet.</div>`}
+  `;
+}
+
+function archiveOldDays() {
+  const oldKeys = oldDayKeys(6);
+  if (!oldKeys.length) return;
+  const archive = {};
+  oldKeys.forEach(k => { archive[k] = state.days[k]; });
+  const blob = new Blob([JSON.stringify(archive)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `cut-plan-archive-${formatDateKey(new Date())}.json`;
+  a.click();
+  oldKeys.forEach(k => delete state.days[k]);
+  saveState();
+  render();
+}
+
 // ---------- Climbing history aggregation (grade pyramid, hardest send, progress chart) ----------
 
+let _climbsHistoryCache = null;
+let _climbsHistoryCacheVersion = -1;
+
+// Scans every logged day, so it's cached against dataVersion — grade pyramid, hardest
+// send, the weekly progress chart, and the weekly report card all call this, and it
+// would otherwise re-scan full history from scratch on every single render.
 function allClimbsHistory() {
+  if (_climbsHistoryCacheVersion === dataVersion) return _climbsHistoryCache;
   const entries = [];
   for (const [dateKey, d] of Object.entries(state.days)) {
     const climbs = d.workout && d.workout.boulder && d.workout.boulder.climbs;
     if (climbs) for (const c of climbs) entries.push({ dateKey, grade: c.grade, outcome: c.outcome });
   }
-  return entries.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  entries.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  _climbsHistoryCache = entries;
+  _climbsHistoryCacheVersion = dataVersion;
+  return entries;
 }
 
 function hardestSend() {
@@ -1179,9 +1404,14 @@ function hardestSend() {
   return best;
 }
 
+let _sessionTypeCountsCache = new Map(); // days -> { version, value }
+
 // Counts of completed boulder sessions by session type within the trailing window
 // (default 28 days / 4 weeks) — used for the balance readout and the adaptive suggestion.
+// Cached per (days, dataVersion) since it's called multiple times per render.
 function recentSessionTypeCounts(days = 28) {
+  const cached = _sessionTypeCountsCache.get(days);
+  if (cached && cached.version === dataVersion) return cached.value;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffKey = formatDateKey(cutoff);
@@ -1193,12 +1423,18 @@ function recentSessionTypeCounts(days = 28) {
       counts[d.workout.boulder.sessionType]++;
     }
   }
+  _sessionTypeCountsCache.set(days, { version: dataVersion, value: counts });
   return counts;
 }
 
+let _climbingStreaksCache = null;
+let _climbingStreaksCacheVersion = -1;
+
 // Current/longest streak of hitting scheduled boulder days (per the weekly schedule),
-// walked from the plan's start date through today.
+// walked from the plan's start date through today. Cached against dataVersion — the
+// date-rolls-over-past-midnight-mid-session edge case is accepted for simplicity.
 function climbingStreaks() {
+  if (_climbingStreaksCacheVersion === dataVersion) return _climbingStreaksCache;
   const startDate = parseKey(state.meta.startDate);
   const today = new Date();
   today.setHours(12, 0, 0, 0); // match parseKey's noon convention so today isn't excluded by a time-of-day mismatch
@@ -1219,7 +1455,9 @@ function climbingStreaks() {
   for (let i = hits.length - 1; i >= 0; i--) {
     if (hits[i]) current++; else break;
   }
-  return { current, longest };
+  _climbingStreaksCache = { current, longest };
+  _climbingStreaksCacheVersion = dataVersion;
+  return _climbingStreaksCache;
 }
 
 // Recap of the current week (Monday through today): climbs, hardest grade, average
@@ -1811,9 +2049,15 @@ document.getElementById("view-root").addEventListener("click", e => {
     const meal = day.meals[mealName];
     const id = el.dataset.item;
     const isTemplateItem = id in (state.mealTemplates[mealName] || {});
-    const next = (meal[id] || 0) + Number(el.dataset.delta);
-    if (next <= 0) { if (isTemplateItem) meal[id] = 0; else delete meal[id]; }
-    else meal[id] = next;
+    const prevQty = meal[id] || 0;
+    const next = prevQty + Number(el.dataset.delta);
+    if (next <= 0) {
+      if (isTemplateItem) meal[id] = 0;
+      else {
+        delete meal[id];
+        recordUndo(`${itemDef(id).label} removed`, () => { meal[id] = prevQty; });
+      }
+    } else meal[id] = next;
     saveState(); render(); return;
   }
   if (action === "mealLogPlanned") {
@@ -1824,6 +2068,48 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "toggleQuickAdd") {
     quickAddOpen = !quickAddOpen;
     render(); return;
+  }
+  if (action === "undoLastDelete") { undoLastDelete(); return; }
+  if (action === "markDeload") {
+    state.lastDeloadDate = formatDateKey(new Date());
+    saveState(); render(); return;
+  }
+  if (action === "setTheme") {
+    state.theme = el.dataset.theme;
+    document.documentElement.setAttribute("data-theme", state.theme);
+    saveState(); render(); return;
+  }
+  if (action === "toggleFoodPicker") {
+    foodPickerOpen = !foodPickerOpen;
+    render(); return;
+  }
+  if (action === "toggleFavoriteItem") {
+    const id = el.dataset.id;
+    if (!state.favoriteItems) state.favoriteItems = {};
+    if (state.favoriteItems[id]) delete state.favoriteItems[id];
+    else state.favoriteItems[id] = true;
+    saveState(); render(); return;
+  }
+  if (action === "copyYesterdayMeals") {
+    const yesterdayKey = formatDateKey(new Date(parseKey(viewDate).getTime() - 86400000));
+    const yesterday = state.days[yesterdayKey];
+    if (yesterday) {
+      for (const mealName of Object.keys(day.meals)) {
+        const yMeal = yesterday.meals[mealName] || {};
+        for (const [id, qty] of Object.entries(yMeal)) {
+          if (!qty) continue;
+          day.meals[mealName][id] = (day.meals[mealName][id] || 0) + qty;
+        }
+      }
+      saveState();
+    }
+    render(); return;
+  }
+  if (action === "mealAddItem") {
+    const id = el.dataset.id;
+    day.meals[el.dataset.meal][id] = 1;
+    bumpItemUsage(id);
+    saveState(); render(); return;
   }
   if (action === "toggleEditDefaults") {
     editDefaultsOpen = !editDefaultsOpen;
@@ -1986,8 +2272,18 @@ document.getElementById("view-root").addEventListener("click", e => {
     ex.sets.push({ weight: suggestedWeight, reps: "" });
     saveState(); render(); return;
   }
+  if (action === "repeatLastSet") {
+    const ex = day.workout.exercises[Number(el.dataset.ex)];
+    const last = ex.sets[ex.sets.length - 1];
+    ex.sets.push({ weight: last.weight, reps: last.reps });
+    saveState(); render(); return;
+  }
   if (action === "removeSet") {
-    day.workout.exercises[Number(el.dataset.ex)].sets.splice(Number(el.dataset.set), 1);
+    const exIdx = Number(el.dataset.ex), setIdx = Number(el.dataset.set);
+    const ex = day.workout.exercises[exIdx];
+    const removed = ex.sets[setIdx];
+    ex.sets.splice(setIdx, 1);
+    recordUndo("Set removed", () => { ex.sets.splice(setIdx, 0, removed); });
     saveState(); render(); return;
   }
   if (action === "toggleWarmupStep") {
@@ -2019,8 +2315,14 @@ document.getElementById("view-root").addEventListener("click", e => {
     saveState();
     const config = BOULDER_GRID_CONFIG[day.workout.boulder.sessionType];
     const shouldRest = next !== null && (config.restTrigger === "cell" || (config.restTrigger === "row" && grid[r].every(cell => cell !== null)));
-    if (shouldRest) startRestTimer(config.restSeconds);
-    else render();
+    if (shouldRest) {
+      startRestTimer(config.restSeconds);
+    } else {
+      // Highest-frequency tap in a climbing session — patch just this one cell instead
+      // of re-rendering the whole tab (the rest banner already forces a full render above).
+      el.className = "grid-cell" + (next ? ` ${next}` : "");
+      el.textContent = next === "done" ? "✓" : next === "fail" ? "✕" : "";
+    }
     return;
   }
   if (action === "setBoulderRating") {
@@ -2040,9 +2342,11 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "removeClimb") {
     const idx = Number(el.dataset.idx);
-    const removed = day.workout.boulder.climbs[idx];
+    const climbs = day.workout.boulder.climbs;
+    const removed = climbs[idx];
     if (removed.photoId) deletePhoto(removed.photoId);
-    day.workout.boulder.climbs.splice(idx, 1);
+    climbs.splice(idx, 1);
+    recordUndo(`${removed.grade} climb removed`, () => { climbs.splice(idx, 0, { grade: removed.grade, outcome: removed.outcome }); });
     saveState(); render(); return;
   }
   if (action === "viewClimbPhoto") {
@@ -2086,6 +2390,8 @@ document.getElementById("view-root").addEventListener("click", e => {
     saveState(); render(); return;
   }
   if (action === "exportData") { exportData(); return; }
+  if (action === "exportCSV") { exportCSV(); return; }
+  if (action === "archiveOldDays") { archiveOldDays(); return; }
   if (action === "setBodyWeightEntryUnit") {
     bodyWeightEntryUnit = el.dataset.unit;
     render(); return;
@@ -2133,6 +2439,22 @@ document.getElementById("view-root").addEventListener("input", e => {
   if (action === "setSteps") { day.steps = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setWaterOz") { day.water.oz = el.value === "" ? 0 : Number(el.value); saveState(); return; }
   if (action === "setNotes") { day.notes = el.value; saveState(); return; }
+  if (action === "setExerciseNote") { state.exerciseNotes[el.dataset.name] = el.value; saveState(); return; }
+  if (action === "filterExerciseList") {
+    const query = el.value.toLowerCase();
+    document.querySelectorAll("[data-exercise-name]").forEach(card => {
+      card.style.display = card.dataset.exerciseName.includes(query) ? "" : "none";
+    });
+    return;
+  }
+  if (action === "filterFoodList") {
+    const query = el.value.toLowerCase();
+    const list = document.getElementById("food-pick-list-" + el.dataset.meal);
+    if (list) list.querySelectorAll(".food-pick-row").forEach(row => {
+      row.style.display = row.dataset.foodLabel.includes(query) ? "" : "none";
+    });
+    return;
+  }
   if (action === "setTimerField") {
     const field = el.dataset.field;
     timerConfig[field] = Number(el.value);
@@ -2184,16 +2506,16 @@ document.getElementById("view-root").addEventListener("change", e => {
   const action = el.dataset.action;
   const day = getOrCreateDay(viewDate);
 
-  if (action === "mealAdd") {
-    const id = el.value;
-    if (id) { day.meals[el.dataset.meal][id] = 1; bumpItemUsage(id); saveState(); render(); }
-    return;
-  }
   if (action === "setWeight") {
     if (bodyWeightEntryUnit === "kg" && day.weight != null) {
       day.weight = Math.round(day.weight * KG_TO_LB * 10) / 10;
       saveState(); render();
     }
+    return;
+  }
+  if (action === "setField" && el.dataset.field === "weight" && el.value !== "") {
+    const repsInput = document.querySelector(`[data-action="setField"][data-field="reps"][data-ex="${el.dataset.ex}"][data-set="${el.dataset.set}"]`);
+    if (repsInput) repsInput.focus();
     return;
   }
   if (action === "setField" && el.dataset.field === "reps" && el.value !== "") {
@@ -2307,6 +2629,35 @@ async function exportData() {
   a.download = `cut-plan-backup-${formatDateKey(new Date())}.json`;
   a.click();
   if (currentTab === "progress") render();
+}
+
+function buildHistoryCSV() {
+  const rows = [["Date", "Weight (lb)", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Fiber (g)", "Steps", "Water (oz)", "Completed"]];
+  for (const key of Object.keys(state.days).sort()) {
+    const d = state.days[key];
+    const t = dayTotals(d);
+    rows.push([
+      key,
+      d.weight ?? "",
+      Math.round(t.cal),
+      Math.round(t.protein),
+      round1(t.carbs),
+      round1(t.fat),
+      round1(t.fiber),
+      d.steps ?? "",
+      d.water?.oz ?? "",
+      d.completed ? "yes" : "no",
+    ]);
+  }
+  return rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+}
+
+function exportCSV() {
+  const blob = new Blob([buildHistoryCSV()], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `cut-plan-history-${formatDateKey(new Date())}.csv`;
+  a.click();
 }
 
 async function importData(file) {

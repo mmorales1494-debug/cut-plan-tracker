@@ -10,6 +10,7 @@ const DEFAULT_TARGETS = {
   protein: 170,
   fat: 62,
   carbs: 190,
+  fiber: 30,
   waterBottlesMin: 2,
   waterBottlesMax: 2,
 };
@@ -93,22 +94,32 @@ const STEP_TARGET = { min: 8000, max: 10000 };
 // Ring colors for the Nutrition macro rings on the Today tab.
 const MACRO_RING_COLORS = { cal: "#4fd1c5", protein: "#378add", carbs: "#ef9f27", fat: "#d4537e" };
 
-// Item catalog: per-unit calories/protein/fat/carbs. Meal totals recompute live from qty * unit values.
+// Item catalog: per-unit calories/protein/fat/carbs/fiber. Meal totals recompute live from qty * unit values.
 const ITEM_CATALOG = {
-  egg:               { label: "Egg (hard-cooked)",      cal: 70,  protein: 6,  fat: 5,   carbs: 0.5 },
-  rice_scoop:        { label: "Rice (scoop)",            cal: 220, protein: 4,  fat: 0,   carbs: 45 },
-  watermelon_juice:  { label: "Watermelon juice",        cal: 120, protein: 1,  fat: 0,   carbs: 30 },
-  fruit:             { label: "Fruit (piece)",           cal: 90,  protein: 1,  fat: 0,   carbs: 23 },
-  espresso:          { label: "Espresso",                cal: 5,   protein: 1,  fat: 0,   carbs: 1 },
-  whey_scoop:        { label: "Whey protein (scoop)",    cal: 120, protein: 24, fat: 2,   carbs: 3 },
-  pb2_scoop:         { label: "PB2 powder (scoop)",      cal: 60,  protein: 6,  fat: 1.5, carbs: 5 },
-  redbull_sf:        { label: "Sugar-free energy drink", cal: 10,  protein: 0,  fat: 0,   carbs: 2 },
-  greens:            { label: "Greens",                  cal: 20,  protein: 2,  fat: 0,   carbs: 3 },
-  tuna_spicy_scoop:  { label: "Spicy tuna (scoop)",       cal: 60,  protein: 5,  fat: 4,   carbs: 1 },
-  tuna_raw_scoop:    { label: "Raw tuna (scoop)",         cal: 40,  protein: 10, fat: 0.5, carbs: 0 },
-  boiled_egg:        { label: "Boiled egg (store)",       cal: 70,  protein: 6,  fat: 5,   carbs: 0.5 },
-  tofu_pack:         { label: "Tofu pack (store)",        cal: 80,  protein: 8,  fat: 4,   carbs: 2 },
-  added_fat:         { label: "Added oil/sauce/dressing", cal: 90,  protein: 0,  fat: 10,  carbs: 2 },
+  egg:               { label: "Egg (hard-cooked)",      cal: 70,  protein: 6,  fat: 5,   carbs: 0.5, fiber: 0 },
+  rice_scoop:        { label: "Rice (scoop)",            cal: 220, protein: 4,  fat: 0,   carbs: 45,  fiber: 0.6 },
+  watermelon_juice:  { label: "Watermelon juice",        cal: 120, protein: 1,  fat: 0,   carbs: 30,  fiber: 0 },
+  fruit:             { label: "Fruit (piece)",           cal: 90,  protein: 1,  fat: 0,   carbs: 23,  fiber: 3 },
+  espresso:          { label: "Espresso",                cal: 5,   protein: 1,  fat: 0,   carbs: 1,   fiber: 0 },
+  whey_scoop:        { label: "Whey protein (scoop)",    cal: 120, protein: 24, fat: 2,   carbs: 3,   fiber: 0 },
+  pb2_scoop:         { label: "PB2 powder (scoop)",      cal: 60,  protein: 6,  fat: 1.5, carbs: 5,   fiber: 2 },
+  redbull_sf:        { label: "Sugar-free energy drink", cal: 10,  protein: 0,  fat: 0,   carbs: 2,   fiber: 0 },
+  greens:            { label: "Greens",                  cal: 20,  protein: 2,  fat: 0,   carbs: 3,   fiber: 1 },
+  tuna_spicy_scoop:  { label: "Spicy tuna (scoop)",       cal: 60,  protein: 5,  fat: 4,   carbs: 1,   fiber: 0 },
+  tuna_raw_scoop:    { label: "Raw tuna (scoop)",         cal: 40,  protein: 10, fat: 0.5, carbs: 0,   fiber: 0 },
+  boiled_egg:        { label: "Boiled egg (store)",       cal: 70,  protein: 6,  fat: 5,   carbs: 0.5, fiber: 0 },
+  tofu_pack:         { label: "Tofu pack (store)",        cal: 80,  protein: 8,  fat: 4,   carbs: 2,   fiber: 1 },
+  added_fat:         { label: "Added oil/sauce/dressing", cal: 90,  protein: 0,  fat: 10,  carbs: 2,   fiber: 0 },
+  chicken_breast:    { label: "Chicken breast (cooked)",  cal: 165, protein: 31, fat: 3.6, carbs: 0,   fiber: 0 },
+  greek_yogurt:      { label: "Greek yogurt (nonfat cup)", cal: 100, protein: 18, fat: 0,  carbs: 6,   fiber: 0 },
+  oatmeal:           { label: "Oatmeal (1/2 cup dry)",    cal: 150, protein: 5,  fat: 3,   carbs: 27,  fiber: 4 },
+  banana:            { label: "Banana",                   cal: 105, protein: 1.3, fat: 0.4, carbs: 27, fiber: 3 },
+  almonds:           { label: "Almonds (1oz)",             cal: 164, protein: 6,  fat: 14,  carbs: 6,   fiber: 3.5 },
+  peanut_butter:     { label: "Peanut butter (1 tbsp)",    cal: 95,  protein: 4,  fat: 8,   carbs: 3,   fiber: 1 },
+  milk_2pct:         { label: "Milk, 2% (1 cup)",          cal: 122, protein: 8,  fat: 5,   carbs: 12,  fiber: 0 },
+  white_bread:       { label: "White bread (1 slice)",     cal: 75,  protein: 2.5, fat: 1,  carbs: 13,  fiber: 0.6 },
+  sweet_potato:      { label: "Sweet potato (medium)",     cal: 100, protein: 2,  fat: 0,   carbs: 24,  fiber: 4 },
+  avocado_half:      { label: "Avocado (half)",            cal: 120, protein: 1.5, fat: 11, carbs: 6,   fiber: 5 },
 };
 
 // Planned quantities per meal (item id -> planned qty). Days start with these items at 0

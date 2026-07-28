@@ -13,6 +13,20 @@
   --radius: 14px;
 }
 
+:root[data-theme="light"] {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --border: #dde1e6;
+  --text: #14171c;
+  --text-dim: #6b7280;
+  --accent: #0f9488;
+  --accent-dim: #cdeeea;
+  --warn: #b06a00;
+  --bad: #c53030;
+  --good: #0f9488;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -216,6 +230,31 @@ html, body {
   margin-top: 8px;
 }
 .quick-add-form .field:last-of-type { margin-bottom: 10px; }
+
+.food-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.food-pick-add {
+  flex: 1;
+  text-align: left;
+}
+.star-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 15px;
+}
+.star-btn.active {
+  color: var(--warn);
+  border-color: var(--warn);
+}
 
 .schedule-edit-row {
   display: flex;
@@ -535,6 +574,19 @@ input[type="range"]::-moz-range-thumb {
   font-size: 13px;
   text-align: center;
   padding: 20px 0;
+}
+
+.undo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
 }
 
 table.hist-table {
