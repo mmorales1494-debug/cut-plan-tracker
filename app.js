@@ -395,6 +395,7 @@ function renderMealSwipeCard(day) {
 
 let quickAddOpen = false;
 let editDefaultsOpen = false;
+let quickAddExerciseOpen = false;
 let foodPickerOpen = false;
 let goalFormOpen = false;
 let bodyWeightEntryUnit = "lb"; // which unit the Body-weight field currently expects typed input in
@@ -772,7 +773,7 @@ function renderWorkoutBody(day) {
     const restBanner = restTimerRemaining > 0 ? `
       <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
         <div class="timer-phase">Resting</div>
-        <div class="timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
+        <div class="timer-clock" id="rest-timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
         <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
       </div>
     ` : "";
@@ -780,8 +781,11 @@ function renderWorkoutBody(day) {
       const last = lastSessionFor(ex.name, viewDate);
       return `
       <div class="exercise-block">
-        <h3>${ex.name}</h3>
-        <input type="text" placeholder="Add a cue/note…" data-action="setExerciseNote" data-name="${ex.name}" value="${state.exerciseNotes[ex.name] || ""}" style="font-size:12px; padding:6px 8px; margin-bottom:8px;">
+        <div class="row">
+          <h3 style="margin:0;">${ex.name}${ex.quickAdd ? ` <span class="recurring-tag">one-time</span>` : ""}</h3>
+          ${ex.quickAdd ? `<button class="icon-btn" data-action="removeQuickAddExercise" data-ex="${exIdx}">✕</button>` : ""}
+        </div>
+        <input type="text" placeholder="Add a cue/note…" data-action="setExerciseNote" data-name="${ex.name}" value="${state.exerciseNotes[ex.name] || ""}" style="font-size:12px; padding:6px 8px; margin-bottom:8px; margin-top:6px;">
         <div class="meal-item-macro">Target: ${routine.setTarget.min}-${routine.setTarget.max} sets × ${routine.repTarget.min}-${routine.repTarget.max} reps</div>
         <div class="meal-item-macro" style="margin-bottom:8px;">${progressionNote(last, routine)}</div>
         ${ex.barbell && last ? `<div class="meal-item-macro" style="margin-bottom:8px;">Warm-up ramp: ${warmupSetSuggestions(last.weight).map(w => formatKgLb(w)).join(" → ")} → ${formatKgLb(last.weight)} working</div>` : ""}
@@ -800,13 +804,29 @@ function renderWorkoutBody(day) {
         </div>
       </div>
     `;
-    }).join("");
+    }).join("") + `
+      <div style="margin-top:8px;">
+        <button class="btn secondary" data-action="toggleQuickAddExercise" style="width:100%;">${quickAddExerciseOpen ? "Cancel" : "+ Quick add an exercise (one-time)"}</button>
+        ${quickAddExerciseOpen ? `
+          <div class="quick-add-form">
+            <div class="field"><label>Exercise name</label><input type="text" id="quickadd-exercise-name" placeholder="e.g. Cable Face Pull" list="known-exercise-names"></div>
+            <datalist id="known-exercise-names">
+              ${[...new Set([...RESISTANCE_EXERCISES, ...state.routines.flatMap(r => r.exercises.map(e => e.name))])].map(n => `<option value="${n}">`).join("")}
+            </datalist>
+            <label style="display:flex; align-items:center; gap:6px; margin-bottom:10px; font-size:12px; color:var(--text-dim);">
+              <input type="checkbox" id="quickadd-exercise-barbell" style="width:auto;"> Barbell (plate calculator)
+            </label>
+            <button class="btn" data-action="submitQuickAddExercise" style="width:100%;">Add for today</button>
+          </div>
+        ` : ""}
+      </div>
+    `;
   }
   if (w.type === "run") {
     const restBanner = restTimerRemaining > 0 ? `
       <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
         <div class="timer-phase">Resting</div>
-        <div class="timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
+        <div class="timer-clock" id="rest-timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
         <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
       </div>
     ` : "";
@@ -828,7 +848,7 @@ function renderWorkoutBody(day) {
     const restBanner = restTimerRemaining > 0 ? `
       <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
         <div class="timer-phase">Resting</div>
-        <div class="timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
+        <div class="timer-clock" id="rest-timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
         <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
       </div>
     ` : "";
@@ -1797,8 +1817,14 @@ function startRestTimer(seconds) {
       releaseWakeLock();
       beep(880, 150);
       setTimeout(() => beep(880, 250), 200);
+      // Finished — a real render is needed to remove the banner from the page.
+      if (currentTab === "today") render();
+    } else {
+      // Just patch the clock text every second instead of a full re-render, so typing
+      // in any other field on the page doesn't get its focus wiped out every tick.
+      const clockEl = document.getElementById("rest-timer-clock");
+      if (clockEl) clockEl.textContent = formatMMSS(restTimerRemaining);
     }
-    if (currentTab === "today") render();
   }, 1000);
   if (currentTab === "today") render();
 }
@@ -2289,6 +2315,22 @@ document.getElementById("view-root").addEventListener("click", e => {
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     const last = ex.sets[ex.sets.length - 1];
     ex.sets.push({ weight: last.weight, reps: last.reps });
+    saveState(); render(); return;
+  }
+  if (action === "toggleQuickAddExercise") {
+    quickAddExerciseOpen = !quickAddExerciseOpen;
+    render(); return;
+  }
+  if (action === "submitQuickAddExercise") {
+    const name = document.getElementById("quickadd-exercise-name").value.trim();
+    if (!name) return;
+    const barbell = document.getElementById("quickadd-exercise-barbell").checked;
+    day.workout.exercises.push({ name, barbell, sets: [], quickAdd: true });
+    quickAddExerciseOpen = false;
+    saveState(); render(); return;
+  }
+  if (action === "removeQuickAddExercise") {
+    day.workout.exercises.splice(Number(el.dataset.ex), 1);
     saveState(); render(); return;
   }
   if (action === "removeSet") {
