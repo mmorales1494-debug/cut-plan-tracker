@@ -142,6 +142,10 @@ const RESISTANCE_EXERCISES = [
   "Band External Rotation",
 ];
 
+// Outcome tag for each logged climb (Volume/Mileage's grade-tally log) — tap a logged
+// entry to cycle through these in order.
+const CLIMB_OUTCOMES = ["Send", "Flash", "Attempt"];
+
 // Boulder session modes — matches the standard power/limit vs volume vs power-endurance
 // training split so session type is tracked alongside minutes and the climb log.
 const BOULDER_SESSION_TYPES = ["Power/Limit", "Volume/Mileage", "Power-Endurance"];

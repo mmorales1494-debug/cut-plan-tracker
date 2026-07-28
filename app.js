@@ -77,6 +77,9 @@ function loadState() {
         if (d.workout && d.workout.boulder && d.workout.boulder.grid === undefined) {
           d.workout.boulder.grid = [];
         }
+        if (d.workout && d.workout.boulder && d.workout.boulder.rating === undefined) {
+          d.workout.boulder.rating = null;
+        }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
@@ -194,7 +197,7 @@ function getOrCreateDay(dateKey) {
         routineId: null,
         core: scheduled === "run" ? CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] })) : [],
         run: { miles: "", minutes: "" },
-        boulder: { minutes: "", climbs: [], sessionType: null, warmupDone: [], grid: [] },
+        boulder: { minutes: "", climbs: [], sessionType: null, warmupDone: [], grid: [], rating: null },
       },
       weight: null,
       waist: null,
@@ -741,6 +744,7 @@ function renderWorkoutBody(day) {
     return `
       ${warmupChecklist}
       ${restBanner}
+      ${!w.boulder.sessionType && suggestNextSessionType() ? `<div class="meal-item-macro" style="margin-bottom:6px;">Suggested: <strong style="color:var(--text);">${suggestNextSessionType()}</strong> (least done in the last 4 weeks)</div>` : ""}
       <div class="field">
         <label>Session type</label>
         <div class="toggle-pill">
@@ -760,11 +764,22 @@ function renderWorkoutBody(day) {
           ${climbs.map((c, i) => `
             <div class="meal-item">
               <div class="meal-item-label">${c.grade}</div>
-              <button class="icon-btn" data-action="removeClimb" data-idx="${i}">✕</button>
+              <div class="row" style="gap:6px; flex:0 0 auto;">
+                <button class="btn secondary" data-action="cycleClimbOutcome" data-idx="${i}" style="padding:4px 10px; font-size:12px;">${c.outcome || "Send"}</button>
+                ${c.photoId
+                  ? `<button class="icon-btn" data-action="viewClimbPhoto" data-idx="${i}">🖼</button>`
+                  : `<label class="icon-btn" style="display:inline-flex; align-items:center; justify-content:center; cursor:pointer;">📷<input type="file" accept="image/*" capture="environment" data-action="addClimbPhoto" data-idx="${i}" style="display:none;"></label>`}
+                <button class="icon-btn" data-action="removeClimb" data-idx="${i}">✕</button>
+              </div>
             </div>
+            <div data-climb-photo-view="${i}" data-expanded="0"></div>
           `).join("")}
         </div>
       ` : `<div class="empty-state" style="margin-top:10px;">No climbs logged yet — tap a grade above as you send.</div>`}
+      <h3 style="margin-top:16px; margin-bottom:8px;">Session rating</h3>
+      <div class="row" style="gap:6px;">
+        ${[1, 2, 3, 4, 5].map(n => `<button class="btn ${w.boulder.rating === n ? "" : "secondary"}" data-action="setBoulderRating" data-value="${n}" style="flex:1;">${n}</button>`).join("")}
+      </div>
     `;
   }
   return `<div class="empty-state">Rest day — nothing to log</div>`;
@@ -994,6 +1009,8 @@ function renderWorkouts() {
 
   return `
     ${renderUpcomingSchedule(14)}
+    ${renderWeeklyReportCard()}
+    ${renderGradePyramid()}
     ${renderRoutineManager()}
     <div class="card"><h2>Resistance progression</h2></div>
     ${renderResistanceProgression()}
@@ -1081,6 +1098,39 @@ function renderBackupStatus() {
   return `<div class="meal-item-macro" style="margin-bottom:8px;">Last backup: ${daysSince === 0 ? "today" : `${daysSince} day${daysSince === 1 ? "" : "s"} ago`}.</div>`;
 }
 
+function weeklyHardestGradeSeries() {
+  const all = allClimbsHistory();
+  const weekOf = (dateKey) => {
+    const d = parseKey(dateKey);
+    const diffToMonday = (d.getDay() + 6) % 7; // days since most recent Monday
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - diffToMonday);
+    return formatDateKey(monday);
+  };
+  const weekMax = {};
+  for (const c of all) {
+    const wk = weekOf(c.dateKey);
+    const idx = CLIMBING_GRADES.indexOf(c.grade);
+    if (weekMax[wk] === undefined || idx > weekMax[wk]) weekMax[wk] = idx;
+  }
+  return Object.entries(weekMax).map(([x, y]) => ({ x, y })).sort((a, b) => a.x.localeCompare(b.x));
+}
+
+function renderClimbingProgressChart() {
+  const series = weeklyHardestGradeSeries();
+  if (series.length < 2) {
+    return `<div class="card"><h2>Climbing progress</h2><div class="empty-state">Log climbs across at least 2 weeks to see a trend</div></div>`;
+  }
+  const latest = series[series.length - 1];
+  return `
+    <div class="card">
+      <h2>Climbing progress</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">Hardest grade per week — currently ${CLIMBING_GRADES[latest.y]}</div>
+      <div class="chart-wrap">${lineChartSVG([series], ["#4fd1c5"])}</div>
+    </div>
+  `;
+}
+
 function renderProgressShell() {
   return `
     ${renderGoalCard()}
@@ -1088,6 +1138,7 @@ function renderProgressShell() {
       <h2>Weight trend</h2>
       <div id="weight-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
     </div>
+    ${renderClimbingProgressChart()}
     <div class="card">
       <h2>Photos</h2>
       <input type="file" accept="image/*" capture="environment" data-action="addPhoto" style="margin-bottom:10px;">
@@ -1103,6 +1154,158 @@ function renderProgressShell() {
           <input type="file" accept="application/json" data-action="importData" style="display:none;">
         </label>
       </div>
+    </div>
+  `;
+}
+
+// ---------- Climbing history aggregation (grade pyramid, hardest send, progress chart) ----------
+
+function allClimbsHistory() {
+  const entries = [];
+  for (const [dateKey, d] of Object.entries(state.days)) {
+    const climbs = d.workout && d.workout.boulder && d.workout.boulder.climbs;
+    if (climbs) for (const c of climbs) entries.push({ dateKey, grade: c.grade, outcome: c.outcome });
+  }
+  return entries.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+}
+
+function hardestSend() {
+  const all = allClimbsHistory();
+  let best = null, bestIdx = -1;
+  for (const c of all) {
+    const idx = CLIMBING_GRADES.indexOf(c.grade);
+    if (idx > bestIdx) { bestIdx = idx; best = c; }
+  }
+  return best;
+}
+
+// Counts of completed boulder sessions by session type within the trailing window
+// (default 28 days / 4 weeks) — used for the balance readout and the adaptive suggestion.
+function recentSessionTypeCounts(days = 28) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffKey = formatDateKey(cutoff);
+  const counts = {};
+  BOULDER_SESSION_TYPES.forEach(t => counts[t] = 0);
+  for (const [dateKey, d] of Object.entries(state.days)) {
+    if (dateKey < cutoffKey) continue;
+    if (d.completed && d.workout.type === "boulder" && d.workout.boulder.sessionType) {
+      counts[d.workout.boulder.sessionType]++;
+    }
+  }
+  return counts;
+}
+
+// Current/longest streak of hitting scheduled boulder days (per the weekly schedule),
+// walked from the plan's start date through today.
+function climbingStreaks() {
+  const startDate = parseKey(state.meta.startDate);
+  const today = new Date();
+  today.setHours(12, 0, 0, 0); // match parseKey's noon convention so today isn't excluded by a time-of-day mismatch
+  const scheduledDates = [];
+  for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+    if (state.weeklySchedule[d.getDay()] === "boulder") scheduledDates.push(formatDateKey(d));
+  }
+  const hits = scheduledDates.map(key => {
+    const day = state.days[key];
+    return !!(day && day.completed && day.workout.type === "boulder");
+  });
+  let longest = 0, running = 0;
+  for (const h of hits) {
+    if (h) { running++; longest = Math.max(longest, running); }
+    else running = 0;
+  }
+  let current = 0;
+  for (let i = hits.length - 1; i >= 0; i--) {
+    if (hits[i]) current++; else break;
+  }
+  return { current, longest };
+}
+
+// Recap of the current week (Monday through today): climbs, hardest grade, average
+// session rating, and how many scheduled training days were actually closed out.
+function weeklyReportCard() {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const diffToMonday = (today.getDay() + 6) % 7;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - diffToMonday);
+  const mondayKey = formatDateKey(monday);
+  const todayKey = formatDateKey(today);
+
+  const weekClimbs = allClimbsHistory().filter(c => c.dateKey >= mondayKey && c.dateKey <= todayKey);
+  let hardestIdx = -1;
+  for (const c of weekClimbs) {
+    const idx = CLIMBING_GRADES.indexOf(c.grade);
+    if (idx > hardestIdx) hardestIdx = idx;
+  }
+
+  const ratings = [];
+  let scheduledCount = 0, trainedCount = 0;
+  for (let d = new Date(monday); d <= today; d.setDate(d.getDate() + 1)) {
+    const key = formatDateKey(d);
+    if (state.weeklySchedule[d.getDay()]) scheduledCount++;
+    const day = state.days[key];
+    if (day && day.completed) {
+      trainedCount++;
+      if (day.workout.type === "boulder" && day.workout.boulder.rating != null) ratings.push(day.workout.boulder.rating);
+    }
+  }
+  const avgRating = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
+
+  return { totalClimbs: weekClimbs.length, hardestGrade: hardestIdx >= 0 ? CLIMBING_GRADES[hardestIdx] : null, avgRating, trainedCount, scheduledCount };
+}
+
+function renderWeeklyReportCard() {
+  const r = weeklyReportCard();
+  return `
+    <div class="card">
+      <h2>This Week</h2>
+      <div class="meal-item-macro">${r.totalClimbs} climb${r.totalClimbs === 1 ? "" : "s"}${r.hardestGrade ? ` — hardest ${r.hardestGrade}` : ""}</div>
+      <div class="meal-item-macro">${r.trainedCount}/${r.scheduledCount} scheduled days trained</div>
+      ${r.avgRating != null ? `<div class="meal-item-macro">Avg session rating: ${r.avgRating}/5</div>` : ""}
+    </div>
+  `;
+}
+
+// Suggests which session type to train next, based on which of the three has been done
+// least in the last 4 weeks — but only once fingers have actually recovered from the last
+// finger-intensive session, so it never nudges toward more climbing before that's safe.
+function suggestNextSessionType() {
+  if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return null;
+  const counts = recentSessionTypeCounts(28);
+  let best = BOULDER_SESSION_TYPES[0];
+  for (const t of BOULDER_SESSION_TYPES) if (counts[t] < counts[best]) best = t;
+  return best;
+}
+
+function renderGradePyramid() {
+  const all = allClimbsHistory();
+  const typeCounts = recentSessionTypeCounts(28);
+  const typeBalanceLine = `<div class="meal-item-macro" style="margin-top:10px;">Last 4 weeks: ${BOULDER_SESSION_TYPES.map(t => `${t} ×${typeCounts[t]}`).join(", ")}</div>`;
+  const streaks = climbingStreaks();
+  const streakLine = `<div class="meal-item-macro" style="margin-top:4px;">Streak: ${streaks.current} current · ${streaks.longest} longest</div>`;
+  if (!all.length) {
+    return `<div class="card"><h2>Grade Pyramid</h2><div class="empty-state">No climbs logged yet</div>${typeBalanceLine}${streakLine}</div>`;
+  }
+  const best = hardestSend();
+  const bestIdx = CLIMBING_GRADES.indexOf(best.grade);
+  const counts = CLIMBING_GRADES.map((g, i) => ({ grade: g, count: all.filter(c => c.grade === g).length, idx: i }));
+  const maxCount = Math.max(...counts.map(c => c.count), 1);
+  const visible = counts.filter(c => c.idx <= bestIdx).slice().reverse();
+  return `
+    <div class="card">
+      <h2>Grade Pyramid</h2>
+      <div class="meal-item-macro" style="margin-bottom:10px;">Hardest send: <strong style="color:var(--text);">${best.grade}</strong> (${niceDate(best.dateKey)})</div>
+      ${visible.map(c => `
+        <div class="pyramid-row">
+          <div class="pyramid-label">${c.grade}</div>
+          <div class="pyramid-bar-track"><div class="pyramid-bar" style="width:${Math.max(4, c.count / maxCount * 100)}%"></div></div>
+          <div class="pyramid-count">${c.count}</div>
+        </div>
+      `).join("")}
+      ${typeBalanceLine}
+      ${streakLine}
     </div>
   `;
 }
@@ -1256,6 +1459,26 @@ async function getAllPhotos() {
     const req = tx.objectStore(PHOTO_STORE).getAll();
     req.onsuccess = () => resolve(req.result.sort((a, b) => b.id.localeCompare(a.id)));
     req.onerror = () => reject(req.error);
+  });
+}
+
+async function getPhoto(id) {
+  const db = await openPhotoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PHOTO_STORE, "readonly");
+    const req = tx.objectStore(PHOTO_STORE).get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deletePhoto(id) {
+  const db = await openPhotoDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PHOTO_STORE, "readwrite");
+    tx.objectStore(PHOTO_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -1800,13 +2023,43 @@ document.getElementById("view-root").addEventListener("click", e => {
     else render();
     return;
   }
+  if (action === "setBoulderRating") {
+    const val = Number(el.dataset.value);
+    day.workout.boulder.rating = day.workout.boulder.rating === val ? null : val;
+    saveState(); render(); return;
+  }
   if (action === "logClimb") {
-    day.workout.boulder.climbs.push({ grade: el.dataset.grade });
+    day.workout.boulder.climbs.push({ grade: el.dataset.grade, outcome: "Send" });
+    saveState(); render(); return;
+  }
+  if (action === "cycleClimbOutcome") {
+    const c = day.workout.boulder.climbs[Number(el.dataset.idx)];
+    const next = CLIMB_OUTCOMES[(CLIMB_OUTCOMES.indexOf(c.outcome) + 1) % CLIMB_OUTCOMES.length];
+    c.outcome = next;
     saveState(); render(); return;
   }
   if (action === "removeClimb") {
-    day.workout.boulder.climbs.splice(Number(el.dataset.idx), 1);
+    const idx = Number(el.dataset.idx);
+    const removed = day.workout.boulder.climbs[idx];
+    if (removed.photoId) deletePhoto(removed.photoId);
+    day.workout.boulder.climbs.splice(idx, 1);
     saveState(); render(); return;
+  }
+  if (action === "viewClimbPhoto") {
+    const idx = Number(el.dataset.idx);
+    const wrap = document.querySelector(`[data-climb-photo-view="${idx}"]`);
+    if (wrap.dataset.expanded === "1") {
+      wrap.innerHTML = "";
+      wrap.dataset.expanded = "0";
+      return;
+    }
+    getPhoto(day.workout.boulder.climbs[idx].photoId).then(p => {
+      if (p) {
+        wrap.innerHTML = `<img src="${URL.createObjectURL(p.blob)}" style="width:100%; border-radius:8px; margin-top:6px;">`;
+        wrap.dataset.expanded = "1";
+      }
+    });
+    return;
   }
   if (action === "addCoreSet") {
     const ex = day.workout.core[Number(el.dataset.ex)];
@@ -1966,6 +2219,19 @@ document.getElementById("view-root").addEventListener("change", e => {
   if (action === "addPhoto") {
     const file = el.files[0];
     if (file) savePhoto(viewDate, file).then(render);
+    return;
+  }
+  if (action === "addClimbPhoto") {
+    const file = el.files[0];
+    const idx = Number(el.dataset.idx);
+    if (file) {
+      const photoId = "climb_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+      savePhoto(photoId, file).then(() => {
+        day.workout.boulder.climbs[idx].photoId = photoId;
+        saveState();
+        render();
+      });
+    }
     return;
   }
   if (action === "importData") {

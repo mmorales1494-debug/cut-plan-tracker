@@ -499,6 +499,37 @@ input[type="range"]::-moz-range-thumb {
 .grid-cell.done { background: var(--accent); border-color: var(--accent); color: #0b1210; }
 .grid-cell.fail { background: var(--bad); border-color: var(--bad); color: #fff; }
 
+.pyramid-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pyramid-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  width: 28px;
+  flex-shrink: 0;
+}
+.pyramid-bar-track {
+  flex: 1;
+  height: 14px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pyramid-bar {
+  height: 100%;
+  background: var(--accent);
+}
+.pyramid-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  width: 20px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .empty-state {
   color: var(--text-dim);
   font-size: 13px;
