@@ -64,6 +64,7 @@ function loadState() {
       if (!parsed.favoriteItems) parsed.favoriteItems = {};
       if (!parsed.theme) parsed.theme = "dark";
       if (!parsed.exerciseNotes) parsed.exerciseNotes = {};
+      if (!parsed.collapsedCards) parsed.collapsedCards = {};
       if (parsed.lastDeloadDate === undefined) parsed.lastDeloadDate = null;
       if (parsed.lastExportAt === undefined) parsed.lastExportAt = null;
       // backward compat: water used to be logged in quarter-bottles, now plain ounces;
@@ -122,6 +123,7 @@ function loadState() {
     theme: "dark",
     exerciseNotes: {},
     lastDeloadDate: null,
+    collapsedCards: {},
   };
 }
 
@@ -330,6 +332,14 @@ function render() {
   const root = document.getElementById("view-root");
   const day = getOrCreateDay(viewDate);
   document.getElementById("day-counter").textContent = niceDate(viewDate);
+  const streakBadge = document.getElementById("streak-badge");
+  const streakCount = nutritionLoggingStreaks().current;
+  if (streakCount > 0) {
+    streakBadge.textContent = `🔥 ${streakCount}`;
+    streakBadge.style.display = "";
+  } else {
+    streakBadge.style.display = "none";
+  }
 
   let html = "";
   if (currentTab === "today") html = renderToday(day);
@@ -438,7 +448,8 @@ function renderMealDefaultsEditor(mealName) {
   const options = notInTemplate.map(id => `<option value="${id}">${itemDef(id).label}</option>`).join("");
 
   return `
-    <div class="quick-add-form">
+    <div class="sheet-backdrop" data-action="toggleEditDefaults"></div>
+    <div class="quick-add-form sheet-panel">
       <div class="meal-item-macro" style="margin-bottom:8px;">Editing the planned defaults for this meal — used by "Log as planned" and shown as the hint next to each item.</div>
       ${rows}
       <div class="add-item-row" style="display:flex; gap:8px; margin-top:8px;">
@@ -489,7 +500,8 @@ function renderMealInner(day, mealName, title) {
       ${hasTemplate ? `<button class="btn secondary" data-action="mealLogPlanned" data-meal="${mealName}">Log as planned</button>` : ""}
     </div>
     ${foodPickerOpen ? `
-      <div class="quick-add-form">
+      <div class="sheet-backdrop" data-action="toggleFoodPicker"></div>
+      <div class="quick-add-form sheet-panel">
         <input type="text" placeholder="Search foods…" data-action="filterFoodList" data-meal="${mealName}" style="margin-bottom:8px;">
         <div class="food-pick-list" id="food-pick-list-${mealName}">
           ${notInMeal.map(id => `
@@ -504,7 +516,8 @@ function renderMealInner(day, mealName, title) {
     <div style="margin-top:8px;">
       <button class="btn secondary" data-action="toggleQuickAdd" style="width:100%;">${quickAddOpen ? "Cancel quick add" : "+ Quick add by macros"}</button>
       ${quickAddOpen ? `
-        <div class="quick-add-form">
+        <div class="sheet-backdrop" data-action="toggleQuickAdd"></div>
+        <div class="quick-add-form sheet-panel">
           <div class="field"><label>Name</label><input type="text" id="quickadd-name" placeholder="e.g. Family Mart onigiri"></div>
           <div class="two-col">
             <div class="field"><label>Calories</label><input type="number" inputmode="decimal" step="0.1" id="quickadd-cal" placeholder="cal"></div>
@@ -570,6 +583,13 @@ function nutritionLoggingStreaks() {
   return { current, longest };
 }
 
+// Header row for a card that can be collapsed to just its title — persisted per-user
+// in state.collapsedCards so density preference sticks across days/sessions.
+function collapsibleCardHeader(cardId, title) {
+  const collapsed = !!state.collapsedCards[cardId];
+  return `<div class="row card-header-row" data-action="toggleCardCollapse" data-card="${cardId}"><h2 style="margin:0;">${title}</h2><span class="collapse-chevron">${collapsed ? "▸" : "▾"}</span></div>`;
+}
+
 function renderToday(day) {
   const totals = dayTotals(day);
   const calTarget = calorieTargetFor(day) ?? (isTrainingDay(day) ? state.targets.calTrain : state.targets.calRest);
@@ -603,7 +623,6 @@ function renderToday(day) {
         <h2 style="margin:0;">Nutrition</h2>
         ${day.completed ? `<span class="meal-item-macro">✓ Complete</span>` : ""}
       </div>
-      ${nutritionLoggingStreaks().current > 0 ? `<div class="meal-item-macro">🔥 ${nutritionLoggingStreaks().current} day logging streak</div>` : ""}
       <div class="ring-row">
         ${rings.map(r => `
           <div class="ring-item">
@@ -626,8 +645,9 @@ function renderToday(day) {
     </div>
 
     <div class="card">
-      <h2>Daily checklist</h2>
-      <div class="meal-item-macro" style="margin-bottom:8px;">Daily items reset fresh every morning. One-time tasks stick around until you check them off, then they're gone for good.</div>
+      ${collapsibleCardHeader("checklist", "Daily checklist")}
+      ${state.collapsedCards.checklist ? "" : `
+      <div class="meal-item-macro" style="margin-bottom:8px; margin-top:10px;">Daily items reset fresh every morning. One-time tasks stick around until you check them off, then they're gone for good.</div>
       ${state.checklistItems.length ? state.checklistItems.map(s => {
         const checkedNow = s.recurring ? !!day.supplements[s.id] : false;
         const checkAction = s.recurring ? "toggleSupplement" : "completeOneTimeItem";
@@ -647,13 +667,15 @@ function renderToday(day) {
           <input type="checkbox" id="checklist-recurring-input" style="width:auto;"> Repeats daily (e.g. meds/supplements)
         </label>
       </div>
+      `}
     </div>
 
     ${renderMealSwipeCard(day)}
 
     <div class="card">
-      <h2>Water</h2>
-      <div class="water-track"><div class="water-fill" style="width:${waterPct}%"></div></div>
+      ${collapsibleCardHeader("water", "Water")}
+      ${state.collapsedCards.water ? "" : `
+      <div class="water-track" style="margin-top:10px;"><div class="water-fill" style="width:${waterPct}%"></div></div>
       <div class="field" style="margin-top:10px;">
         <label>${waterEntryUnit === "ml" ? "Milliliters logged today" : "Ounces logged today"}</label>
         <div class="toggle-pill" style="max-width:160px; margin-bottom:6px;">
@@ -674,15 +696,18 @@ function renderToday(day) {
         `}
       </div>
       <div class="meal-item-macro" style="margin-top:6px;">target ${waterEntryUnit === "ml" ? `${Math.round(waterTargetOzMin * ML_PER_OZ)}${waterTargetOzMin === waterTargetOzMax ? "" : `-${Math.round(waterTargetOzMax * ML_PER_OZ)}`} ml` : `${waterTargetOzMin}${waterTargetOzMin === waterTargetOzMax ? "" : `-${waterTargetOzMax}`} oz`}${day.workout.type === "boulder" ? " (bumped for bouldering)" : ""}</div>
+      `}
     </div>
 
     <div class="card">
-      <h2>Steps</h2>
-      <div class="field">
+      ${collapsibleCardHeader("steps", "Steps")}
+      ${state.collapsedCards.steps ? "" : `
+      <div class="field" style="margin-top:10px;">
         <label>From Apple Health</label>
         <input type="number" inputmode="numeric" placeholder="e.g. 8500" data-action="setSteps" value="${day.steps ?? ""}">
       </div>
       <div class="meal-item-macro" style="margin-top:6px;">target ${STEP_TARGET.min.toLocaleString()}-${STEP_TARGET.max.toLocaleString()} steps</div>
+      `}
     </div>
 
     <div class="card">
@@ -698,8 +723,9 @@ function renderToday(day) {
     ${renderPullSuggestion(day)}
 
     <div class="card">
-      <h2>Body</h2>
-      <div class="field">
+      ${collapsibleCardHeader("body", "Body")}
+      ${state.collapsedCards.body ? "" : `
+      <div class="field" style="margin-top:10px;">
         <label>Weight (lb)</label>
         <div class="toggle-pill" style="max-width:160px; margin-bottom:6px;">
           <button data-action="setBodyWeightEntryUnit" data-unit="lb" class="${bodyWeightEntryUnit === "lb" ? "active" : ""}">lb</button>
@@ -708,6 +734,7 @@ function renderToday(day) {
         <input type="number" inputmode="decimal" step="0.1" data-action="setWeight" value="${day.weight ?? ""}">
       </div>
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
+      `}
     </div>
   `;
 }
@@ -844,7 +871,8 @@ function renderWorkoutBody(day) {
       <div style="margin-top:8px;">
         <button class="btn secondary" data-action="toggleQuickAddExercise" style="width:100%;">${quickAddExerciseOpen ? "Cancel" : "+ Quick add an exercise (one-time)"}</button>
         ${quickAddExerciseOpen ? `
-          <div class="quick-add-form">
+          <div class="sheet-backdrop" data-action="toggleQuickAddExercise"></div>
+          <div class="quick-add-form sheet-panel">
             <div class="field"><label>Exercise name</label><input type="text" id="quickadd-exercise-name" placeholder="Search, or type a new exercise…" data-action="filterExercisePickList" autocomplete="off"></div>
             <div class="food-pick-list" id="quickadd-exercise-pick-list" style="margin-bottom:10px;">
               ${[...new Set([...RESISTANCE_EXERCISES, ...state.routines.flatMap(r => r.exercises.map(e => e.name))])].sort().map(n => `
@@ -882,7 +910,8 @@ function renderWorkoutBody(day) {
       <div style="margin-top:8px;">
         <button class="btn secondary" data-action="toggleQuickAddCore" style="width:100%;">${quickAddCoreOpen ? "Cancel" : "+ Quick add a core exercise (one-time)"}</button>
         ${quickAddCoreOpen ? `
-          <div class="quick-add-form">
+          <div class="sheet-backdrop" data-action="toggleQuickAddCore"></div>
+          <div class="quick-add-form sheet-panel">
             <div class="field"><label>Exercise name</label><input type="text" id="quickadd-core-name" placeholder="e.g. Side Plank"></div>
             <div class="field">
               <label>Type</label>
@@ -2032,7 +2061,8 @@ function renderClimbing() {
     <div style="margin-top:10px;">
       <button class="btn secondary" data-action="toggleSavePreset" style="width:100%;">${savePresetOpen ? "Cancel" : "+ Save current settings as preset"}</button>
       ${savePresetOpen ? `
-        <div class="quick-add-form">
+        <div class="sheet-backdrop" data-action="toggleSavePreset"></div>
+        <div class="quick-add-form sheet-panel">
           <div class="field"><label>Preset name</label><input type="text" id="save-preset-name" placeholder="e.g. My Repeaters"></div>
           <button class="btn" data-action="submitSavePreset" style="width:100%;">Save preset</button>
         </div>
@@ -2117,6 +2147,11 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "backFromSettings") {
     currentTab = tabBeforeSettings;
     render(); return;
+  }
+  if (action === "toggleCardCollapse") {
+    const cardId = el.dataset.card;
+    state.collapsedCards[cardId] = !state.collapsedCards[cardId];
+    saveState(); render(); return;
   }
   if (action === "navDay") {
     viewDate = addDays(viewDate, Number(el.dataset.delta));
