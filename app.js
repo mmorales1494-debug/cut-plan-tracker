@@ -406,13 +406,16 @@ function renderMealSwipeCard(day) {
   const hasYesterday = !!state.days[yesterdayKey];
   return `
     <div class="card">
-      <div class="toggle-pill">
+      ${collapsibleCardHeader("meals", "Meals")}
+      ${state.collapsedCards.meals ? "" : `
+      <div class="toggle-pill" style="margin-top:10px;">
         ${MEAL_ORDER.map((m, i) => `<button data-action="setMealTab" data-idx="${i}" class="${i === mealTabIndex ? "active" : ""}">${MEAL_TAB_LABELS[m]}</button>`).join("")}
       </div>
       ${hasYesterday ? `<button class="btn secondary" data-action="copyYesterdayMeals" style="width:100%; margin-top:8px;">Copy yesterday's meals</button>` : ""}
       <div class="meal-swipe-area" data-swipe="meal" style="margin-top:12px;">
         ${renderMealInner(day, mealName, MEAL_TITLES[mealName])}
       </div>
+      `}
     </div>`;
 }
 
@@ -711,13 +714,15 @@ function renderToday(day) {
     </div>
 
     <div class="card">
-      <h2>Workout</h2>
-      <div class="toggle-pill">
+      ${collapsibleCardHeader("workout", "Workout")}
+      ${state.collapsedCards.workout ? "" : `
+      <div class="toggle-pill" style="margin-top:10px;">
         ${["rest", "resistance", "run", "boulder"].map(t => `<button data-action="setWorkoutType" data-type="${t}" class="${day.workout.type === t ? "active" : ""}">${activityLabel(t)}</button>`).join("")}
       </div>
       <div style="margin-top:12px;">
         ${renderWorkoutBody(day)}
       </div>
+      `}
     </div>
 
     ${renderPullSuggestion(day)}
