@@ -346,15 +346,46 @@ const WEEKLY_SCHEDULE = {
   6: "boulder",     // Saturday
 };
 
-const RESISTANCE_EXERCISES = [
-  "Goblet Squat",
-  "Romanian Deadlift (Dumbbell)",
-  "Dumbbell Bench / Floor Press",
-  "Dumbbell Row",
-  "Push-Up",
-  "Walking Lunge",
-  "Band External Rotation",
-];
+// Movement-pattern category per exercise — used to suggest a same-category alternative
+// when swapping an exercise out of a day's workout (e.g. no cable machine today).
+const EXERCISE_CATEGORIES = {
+  "Goblet Squat": "squat",
+  "Front Squat": "squat",
+  "Bulgarian Split Squat": "squat",
+  "Leg Press": "squat",
+  "Hack Squat": "squat",
+  "Romanian Deadlift (Dumbbell)": "hinge",
+  "Conventional Deadlift": "hinge",
+  "Kettlebell Swing": "hinge",
+  "Good Morning": "hinge",
+  "Hip Thrust": "hinge",
+  "Dumbbell Bench / Floor Press": "push",
+  "Push-Up": "push",
+  "Overhead Press (Dumbbell)": "push",
+  "Incline Dumbbell Press": "push",
+  "Dip": "push",
+  "Cable Chest Fly": "push",
+  "Dumbbell Row": "pull",
+  "Pull-Up": "pull",
+  "Chin-Up": "pull",
+  "Lat Pulldown": "pull",
+  "Seated Cable Row": "pull",
+  "Face Pull": "pull",
+  "Inverted Row": "pull",
+  "Walking Lunge": "lunge",
+  "Reverse Lunge": "lunge",
+  "Step-Up": "lunge",
+  "Band External Rotation": "shoulder",
+  "Lateral Raise": "shoulder",
+  "Cable Y-Raise": "shoulder",
+  "Bicep Curl (Dumbbell)": "arms",
+  "Hammer Curl": "arms",
+  "Tricep Pushdown": "arms",
+  "Overhead Tricep Extension": "arms",
+  "Calf Raise": "legs",
+};
+
+const RESISTANCE_EXERCISES = Object.keys(EXERCISE_CATEGORIES);
 
 // Outcome tag for each logged climb (Volume/Mileage's grade-tally log) — tap a logged
 // entry to cycle through these in order.

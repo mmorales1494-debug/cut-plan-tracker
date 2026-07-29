@@ -89,6 +89,12 @@ function loadState() {
         if (d.workout && d.workout.boulder && d.workout.boulder.rating === undefined) {
           d.workout.boulder.rating = null;
         }
+        // backward compat: single daily weight field split into AM/PM — old entries were
+        // always logged once, treated as the AM (fasted) reading going forward.
+        if (d.weightAM === undefined) {
+          d.weightAM = d.weight != null ? d.weight : null;
+          d.weightPM = null;
+        }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
@@ -201,8 +207,8 @@ function populateResistanceExercises(day) {
 
 function getOrCreateDay(dateKey) {
   if (!state.days[dateKey]) {
-    const dow = parseKey(dateKey).getDay();
-    const scheduled = state.weeklySchedule[dow];
+    const previousDay = state.days[addDays(dateKey, -1)];
+    const scheduled = suggestedWorkoutType(dateKey, previousDay ? previousDay.workout.type : null);
     state.days[dateKey] = {
       scheduledActivity: scheduled,
       meals: emptyMealsFromTemplate(),
@@ -216,7 +222,8 @@ function getOrCreateDay(dateKey) {
         run: { miles: "", minutes: "" },
         boulder: { minutes: "", climbs: [], sessionType: null, warmupDone: [], grid: [], rating: null },
       },
-      weight: null,
+      weightAM: null,
+      weightPM: null,
       waist: null,
       notes: "",
       completed: false,
@@ -423,11 +430,15 @@ let quickAddOpen = false;
 let editDefaultsOpen = false;
 let quickAddExerciseOpen = false;
 let quickAddCoreOpen = false;
+let swapExerciseIndex = null; // index in day.workout.exercises currently showing the swap picker, or null
 let foodPickerOpen = false;
 let goalFormOpen = false;
 let bodyWeightEntryUnit = "lb"; // which unit the Body-weight field currently expects typed input in
 let waterEntryUnit = "oz"; // which unit the Water field currently expects typed input in
 let goalFormSex = null; // live selection while the goal form is open, before it's saved
+let comparePhotosOpen = false;
+let compareBeforeId = null;
+let compareAfterId = null;
 
 function renderMealDefaultsEditor(mealName) {
   const template = state.mealTemplates[mealName] || {};
@@ -540,16 +551,56 @@ function renderMealInner(day, mealName, title) {
     </div>`;
 }
 
-// Days since the most recent finger-intensive session (bouldering or a completed hangboard
-// timer run), so resistance/run days know whether it's safe to suggest more pulling work.
-function daysSinceFingerLoad() {
+// Days between the most recent finger-intensive session (bouldering or a completed hangboard
+// timer run) strictly before asOfKey, and asOfKey itself — so a specific date (today, or a
+// previewed future date) can check whether fingers will have recovered by then.
+function daysSinceFingerLoadAsOf(asOfKey) {
   const dates = Object.entries(state.days)
-    .filter(([, d]) => (d.completed && d.workout.type === "boulder") || (d.hangboardSessions || 0) > 0)
+    .filter(([k, d]) => k < asOfKey && ((d.completed && d.workout.type === "boulder") || (d.hangboardSessions || 0) > 0))
     .map(([k]) => k)
     .sort();
   if (!dates.length) return Infinity;
   const last = dates[dates.length - 1];
-  return Math.floor((Date.parse(formatDateKey(new Date())) - Date.parse(last)) / 86400000);
+  return Math.floor((Date.parse(asOfKey) - Date.parse(last)) / 86400000);
+}
+
+// Days since the most recent finger-intensive session (bouldering or a completed hangboard
+// timer run), so resistance/run days know whether it's safe to suggest more pulling work.
+function daysSinceFingerLoad() {
+  return daysSinceFingerLoadAsOf(formatDateKey(new Date()));
+}
+
+// Simple RPE-style auto-regulation: a recently-rated rough climbing session (1-2/5) keeps
+// nudging away from bouldering for a bit longer than pure finger recovery alone accounts for.
+function recentSessionWasRough(asOfKey) {
+  const rated = Object.entries(state.days)
+    .filter(([k, d]) => k < asOfKey && d.workout.type === "boulder" && d.workout.boulder.rating != null)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (!rated.length) return false;
+  const [lastKey, lastDay] = rated[rated.length - 1];
+  const daysSince = Math.floor((Date.parse(asOfKey) - Date.parse(lastKey)) / 86400000);
+  return lastDay.workout.boulder.rating <= 2 && daysSince < FINGER_RECOVERY_DAYS * 2;
+}
+
+// Recommends a workout type for dateKey given the type trained the day before (previousType),
+// flexing the fixed weekly schedule around three constraints: never suggest bouldering before
+// fingers have recovered, ease off bouldering a bit longer after a session rated rough, and
+// avoid repeating the exact same training type two days running.
+// Purely a *default* — setWorkoutType always lets the user override it for that day.
+function suggestedWorkoutType(dateKey, previousType) {
+  const scheduled = state.weeklySchedule[parseKey(dateKey).getDay()];
+  if (!scheduled || scheduled === "rest") return scheduled;
+
+  const fingersRecovered = daysSinceFingerLoadAsOf(dateKey) >= FINGER_RECOVERY_DAYS;
+  const goodToBoulder = fingersRecovered && !recentSessionWasRough(dateKey);
+  if (scheduled === "boulder" && !goodToBoulder) {
+    return previousType === "resistance" ? "run" : "resistance";
+  }
+  if (scheduled === previousType) {
+    const alternatives = ["resistance", "run", "boulder"].filter(t => t !== scheduled);
+    return alternatives.find(t => t !== "boulder" || goodToBoulder) || "rest";
+  }
+  return scheduled;
 }
 
 function renderPullSuggestion(day) {
@@ -736,7 +787,10 @@ function renderToday(day) {
           <button data-action="setBodyWeightEntryUnit" data-unit="lb" class="${bodyWeightEntryUnit === "lb" ? "active" : ""}">lb</button>
           <button data-action="setBodyWeightEntryUnit" data-unit="kg" class="${bodyWeightEntryUnit === "kg" ? "active" : ""}">kg</button>
         </div>
-        <input type="number" inputmode="decimal" step="0.1" data-action="setWeight" value="${day.weight ?? ""}">
+        <div class="two-col">
+          <div class="field"><label>AM</label><input type="number" inputmode="decimal" step="0.1" data-action="setWeight" data-period="am" value="${day.weightAM ?? ""}"></div>
+          <div class="field"><label>PM</label><input type="number" inputmode="decimal" step="0.1" data-action="setWeight" data-period="pm" value="${day.weightPM ?? ""}"></div>
+        </div>
       </div>
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
       `}
@@ -754,6 +808,60 @@ function warmupSetSuggestions(workingWeightKg) {
 function lastSessionFor(name, beforeKey) {
   const rows = collectExerciseHistory(name).filter(r => r.dateKey < beforeKey);
   return rows.length ? rows[rows.length - 1] : null;
+}
+
+// Full set-by-set breakdown (not just the top set) from the most recent day this exercise
+// was actually logged before beforeKey — powers "fill all sets from last session."
+function lastFullSessionSets(name, beforeKey) {
+  const dateKeys = Object.keys(state.days).filter(k => k < beforeKey).sort();
+  for (let i = dateKeys.length - 1; i >= 0; i--) {
+    const d = state.days[dateKeys[i]];
+    if (d.workout.type !== "resistance") continue;
+    const ex = d.workout.exercises.find(e => e.name === name);
+    if (ex && ex.sets.length) return ex.sets.map(s => ({ weight: s.weight, reps: s.reps }));
+  }
+  return null;
+}
+
+// Recommends a same-movement-pattern alternative when swapping an exercise out (e.g. no
+// cable machine today) — prefers whichever candidate hasn't been trained most recently,
+// so it doubles as light exercise-variety rotation rather than always suggesting the same one.
+function suggestAlternativeExercise(currentName, excludeNames) {
+  const category = EXERCISE_CATEGORIES[currentName];
+  if (!category) return null;
+  const candidates = Object.keys(EXERCISE_CATEGORIES)
+    .filter(name => EXERCISE_CATEGORIES[name] === category && name !== currentName && !excludeNames.includes(name));
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const lastA = lastSessionFor(a, viewDate)?.dateKey || "";
+    const lastB = lastSessionFor(b, viewDate)?.dateKey || "";
+    return lastA.localeCompare(lastB);
+  });
+  return candidates[0];
+}
+
+function renderExerciseSwapSheet(ex, exIdx, excludeNames) {
+  const suggested = suggestAlternativeExercise(ex.name, excludeNames);
+  const allNames = [...new Set([...RESISTANCE_EXERCISES, ...state.routines.flatMap(r => r.exercises.map(e => e.name))])].sort();
+  return `
+    <div class="sheet-backdrop" data-action="toggleSwapExercise" data-ex="${exIdx}"></div>
+    <div class="quick-add-form sheet-panel">
+      <div class="meal-item-macro" style="margin-bottom:8px;">Swap "${ex.name}" for today only — sets reset, your routine isn't changed.</div>
+      ${suggested ? `<button class="btn secondary" data-action="selectSwapExerciseName" data-name="${suggested}" style="width:100%; margin-bottom:10px; border-color:var(--accent); color:var(--accent);">Suggested: ${suggested}</button>` : ""}
+      <div class="field"><label>New exercise</label><input type="text" id="swap-exercise-name" placeholder="Search, or type a new exercise…" data-action="filterSwapExercisePickList" autocomplete="off" value="${ex.name}"></div>
+      <div class="food-pick-list" id="swap-exercise-pick-list" style="margin-bottom:10px;">
+        ${allNames.map(n => `
+          <div class="food-pick-row" data-exercise-label="${n.toLowerCase()}">
+            <button class="btn secondary food-pick-add" data-action="selectSwapExerciseName" data-name="${n}" style="width:100%;">${n}</button>
+          </div>
+        `).join("")}
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; margin-bottom:10px; font-size:12px; color:var(--text-dim);">
+        <input type="checkbox" id="swap-exercise-barbell" style="width:auto;" ${ex.barbell ? "checked" : ""}> Barbell (plate calculator)
+      </label>
+      <button class="btn" data-action="submitSwapExercise" data-ex="${exIdx}" style="width:100%;">Swap</button>
+    </div>
+  `;
 }
 
 function progressionNote(last, routine) {
@@ -847,17 +955,24 @@ function renderWorkoutBody(day) {
     ` : "";
     return restBanner + routineHeader + w.exercises.map((ex, exIdx) => {
       const last = lastSessionFor(ex.name, viewDate);
+      const lastFullSets = lastFullSessionSets(ex.name, viewDate);
       return `
       <div class="exercise-block">
         <div class="row">
           <h3 style="margin:0;">${ex.name}${ex.quickAdd ? ` <span class="recurring-tag">one-time</span>` : ""}</h3>
-          ${ex.quickAdd ? `<button class="icon-btn" data-action="removeQuickAddExercise" data-ex="${exIdx}">✕</button>` : ""}
+          <div style="display:flex; gap:6px;">
+            <button class="icon-btn" data-action="toggleSwapExercise" data-ex="${exIdx}" aria-label="Swap exercise">⇄</button>
+            ${ex.quickAdd ? `<button class="icon-btn" data-action="removeQuickAddExercise" data-ex="${exIdx}">✕</button>` : ""}
+          </div>
         </div>
+        ${swapExerciseIndex === exIdx ? renderExerciseSwapSheet(ex, exIdx, w.exercises.filter((_, i) => i !== exIdx).map(e => e.name)) : ""}
         <input type="text" placeholder="Add a cue/note…" data-action="setExerciseNote" data-name="${ex.name}" value="${state.exerciseNotes[ex.name] || ""}" style="font-size:12px; padding:6px 8px; margin-bottom:8px; margin-top:6px;">
         <div class="meal-item-macro">Target: ${routine.setTarget.min}-${routine.setTarget.max} sets × ${routine.repTarget.min}-${routine.repTarget.max} reps</div>
         <div class="meal-item-macro" style="margin-bottom:8px;">${progressionNote(last, routine)}</div>
         ${ex.barbell && last ? `<div class="meal-item-macro" style="margin-bottom:8px;">Warm-up ramp: ${warmupSetSuggestions(last.weight).map(w => formatKgLb(w)).join(" → ")} → ${formatKgLb(last.weight)} working</div>` : ""}
-        ${ex.sets.map((s, sIdx) => `
+        ${(() => {
+          const priorBest = priorBestEst1RM(ex.name);
+          return ex.sets.map((s, sIdx) => `
           <div class="set-row">
             <div class="set-num">${sIdx + 1}</div>
             <input type="number" inputmode="decimal" placeholder="${state.weightUnit}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${toDisplayWeight(s.weight)}">
@@ -865,11 +980,14 @@ function renderWorkoutBody(day) {
             <button class="remove-set" data-action="removeSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
           </div>
           ${ex.barbell ? `<div data-plate-for="${exIdx}-${sIdx}">${renderPlateCalc(s.weight)}</div>` : ""}
-        `).join("")}
+          ${isSetPR(s.weight, s.reps, priorBest) ? `<div class="pr-badge">🏆 New PR — est. 1RM ${formatKgLb(estimated1RM(Number(s.weight) || 0, Number(s.reps) || 0))}</div>` : ""}
+        `).join("");
+        })()}
         <div class="row" style="gap:8px;">
           <button class="btn secondary" data-action="addSet" data-ex="${exIdx}" style="flex:1;">+ Add set</button>
           ${ex.sets.length ? `<button class="btn secondary" data-action="repeatLastSet" data-ex="${exIdx}" style="flex:1;">Repeat last set</button>` : ""}
         </div>
+        ${lastFullSets ? `<button class="btn secondary" data-action="fillFromLastSession" data-ex="${exIdx}" style="width:100%; margin-top:8px;">Fill from last session (${lastFullSets.length} set${lastFullSets.length === 1 ? "" : "s"})</button>` : ""}
       </div>
     `;
     }).join("") + `
@@ -1049,19 +1167,23 @@ function renderScheduleEditor() {
 function renderUpcomingSchedule(daysAhead) {
   const todayKey = formatDateKey(new Date());
   const rows = [];
+  let previousType = state.days[addDays(todayKey, -1)]?.workout.type ?? null;
   for (let i = 0; i < daysAhead; i++) {
     const key = addDays(todayKey, i);
-    const scheduled = state.weeklySchedule[parseKey(key).getDay()];
+    const existing = state.days[key];
+    const scheduled = existing ? existing.workout.type : suggestedWorkoutType(key, previousType);
+    previousType = scheduled;
     rows.push(`
       <div class="meal-item">
         <div class="meal-item-label">${i === 0 ? "Today — " : ""}${niceDate(key)}</div>
-        <span class="badge ${scheduled || "rest"}">${scheduledActivityLabel(scheduled)}</span>
+        <span class="badge ${scheduled || "rest"}">${scheduledActivityLabel(scheduled)}${!existing ? " (predicted)" : ""}</span>
       </div>
     `);
   }
   return `
     <div class="card">
       <h2>Upcoming schedule</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">Adapts to what you actually did the day before — gated by finger recovery and recent session ratings, not locked to the fixed weekly slot. Always overridable on the day.</div>
       ${rows.join("")}
     </div>
   `;
@@ -1148,6 +1270,21 @@ function renderRoutineManager() {
 // Epley formula estimate; weight/output stay in whatever unit the input weight is (kg internally).
 function estimated1RM(weight, reps) {
   return Math.round(weight * (1 + reps / 30) * 10) / 10;
+}
+
+// Highest estimated 1RM ever logged for this exercise strictly before today — the bar a
+// set logged today needs to clear to count as a new PR.
+function priorBestEst1RM(name) {
+  return collectExerciseHistory(name)
+    .filter(r => r.dateKey < viewDate)
+    .reduce((max, r) => Math.max(max, estimated1RM(r.weight, r.reps)), 0);
+}
+
+function isSetPR(weightKg, reps, priorBest) {
+  const w = Number(weightKg) || 0;
+  const r = Number(reps) || 0;
+  if (!w || !r) return false;
+  return estimated1RM(w, r) > priorBest;
 }
 
 function renderExerciseProgressionCard(name) {
@@ -1412,6 +1549,10 @@ function renderProgressShell() {
       <h2>Photos</h2>
       <input type="file" accept="image/*" capture="environment" data-action="addPhoto" style="margin-bottom:10px;">
       <div id="photo-grid-slot" class="photo-grid"></div>
+      <div style="margin-top:12px;">
+        <button class="btn secondary" data-action="toggleComparePhotos" style="width:100%;">${comparePhotosOpen ? "Close comparison" : "Compare photos"}</button>
+        ${comparePhotosOpen ? `<div id="compare-photos-slot" style="margin-top:10px;"><div class="empty-state">Loading…</div></div>` : ""}
+      </div>
     </div>
   `;
 }
@@ -1663,10 +1804,17 @@ function renderGradePyramid() {
   `;
 }
 
+// The AM (fasted) reading is the primary tracked value for charts/goal math, since it's the
+// most comparable day-to-day; falls back to PM on days only one reading was logged.
+function trackedWeightForDay(d) {
+  const v = d.weightAM ?? d.weightPM;
+  return v != null && v !== "" ? Number(v) : null;
+}
+
 function weightSeries() {
   return Object.entries(state.days)
-    .filter(([, d]) => d.weight != null && d.weight !== "")
-    .map(([k, d]) => ({ x: k, y: Number(d.weight) }))
+    .map(([k, d]) => ({ x: k, y: trackedWeightForDay(d) }))
+    .filter(p => p.y != null)
     .sort((a, b) => a.x.localeCompare(b.x));
 }
 
@@ -1761,6 +1909,39 @@ function hydrateProgress() {
     if (!photos.length) { grid.innerHTML = `<div class="empty-state">No photos yet</div>`; return; }
     grid.innerHTML = photos.map(p => `<img src="${URL.createObjectURL(p.blob)}" alt="${p.id}" title="${p.id}">`).join("");
   });
+
+  if (comparePhotosOpen) {
+    const slot = document.getElementById("compare-photos-slot");
+    getAllPhotos().then(photos => {
+      if (!slot) return;
+      const bodyPhotos = photos.filter(p => /^\d{4}-\d{2}-\d{2}$/.test(p.id)).sort((a, b) => a.id.localeCompare(b.id));
+      if (bodyPhotos.length < 2) {
+        slot.innerHTML = `<div class="empty-state">Need at least 2 dated progress photos to compare</div>`;
+        return;
+      }
+      if (!bodyPhotos.some(p => p.id === compareBeforeId)) compareBeforeId = bodyPhotos[0].id;
+      if (!bodyPhotos.some(p => p.id === compareAfterId)) compareAfterId = bodyPhotos[bodyPhotos.length - 1].id;
+      const beforePhoto = bodyPhotos.find(p => p.id === compareBeforeId);
+      const afterPhoto = bodyPhotos.find(p => p.id === compareAfterId);
+      const options = list => list.map(p => `<option value="${p.id}">${niceDate(p.id)}</option>`).join("");
+      slot.innerHTML = `
+        <div class="two-col">
+          <div class="field"><label>Before</label>
+            <select data-action="setComparePhoto" data-slot="before">${options(bodyPhotos)}</select>
+          </div>
+          <div class="field"><label>After</label>
+            <select data-action="setComparePhoto" data-slot="after">${options(bodyPhotos)}</select>
+          </div>
+        </div>
+        <div class="compare-photos-grid">
+          <div><img src="${URL.createObjectURL(beforePhoto.blob)}" alt="Before"><div class="meal-item-macro" style="text-align:center; margin-top:4px;">${niceDate(beforePhoto.id)}</div></div>
+          <div><img src="${URL.createObjectURL(afterPhoto.blob)}" alt="After"><div class="meal-item-macro" style="text-align:center; margin-top:4px;">${niceDate(afterPhoto.id)}</div></div>
+        </div>
+      `;
+      slot.querySelector('[data-slot="before"]').value = compareBeforeId;
+      slot.querySelector('[data-slot="after"]').value = compareAfterId;
+    });
+  }
 }
 
 // simple multi-series SVG line chart, x = date-string categories, y = numeric
@@ -2426,6 +2607,14 @@ document.getElementById("view-root").addEventListener("click", e => {
     ex.sets.push({ weight: last.weight, reps: last.reps });
     saveState(); render(); return;
   }
+  if (action === "fillFromLastSession") {
+    const ex = day.workout.exercises[Number(el.dataset.ex)];
+    const priorSets = lastFullSessionSets(ex.name, viewDate);
+    if (!priorSets) return;
+    if (ex.sets.length && !confirm(`Replace ${ex.sets.length} logged set(s) with last session's ${priorSets.length}?`)) return;
+    ex.sets = priorSets.map(s => ({ weight: s.weight, reps: s.reps }));
+    saveState(); render(); return;
+  }
   if (action === "toggleQuickAddExercise") {
     quickAddExerciseOpen = !quickAddExerciseOpen;
     render(); return;
@@ -2445,6 +2634,28 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "removeQuickAddExercise") {
     day.workout.exercises.splice(Number(el.dataset.ex), 1);
+    saveState(); render(); return;
+  }
+  if (action === "toggleSwapExercise") {
+    const exIdx = Number(el.dataset.ex);
+    swapExerciseIndex = swapExerciseIndex === exIdx ? null : exIdx;
+    render(); return;
+  }
+  if (action === "selectSwapExerciseName") {
+    const input = document.getElementById("swap-exercise-name");
+    if (input) input.value = el.dataset.name;
+    return;
+  }
+  if (action === "submitSwapExercise") {
+    const exIdx = Number(el.dataset.ex);
+    const name = document.getElementById("swap-exercise-name").value.trim();
+    if (!name) return;
+    const barbell = document.getElementById("swap-exercise-barbell").checked;
+    const ex = day.workout.exercises[exIdx];
+    ex.name = name;
+    ex.barbell = barbell;
+    ex.sets = [];
+    swapExerciseIndex = null;
     saveState(); render(); return;
   }
   if (action === "toggleQuickAddCore") {
@@ -2642,6 +2853,10 @@ document.getElementById("view-root").addEventListener("click", e => {
     goalFormSex = null;
     saveState(); render(); return;
   }
+  if (action === "toggleComparePhotos") {
+    comparePhotosOpen = !comparePhotosOpen;
+    render(); return;
+  }
 });
 
 document.getElementById("view-root").addEventListener("input", e => {
@@ -2650,7 +2865,11 @@ document.getElementById("view-root").addEventListener("input", e => {
   const action = el.dataset.action;
   const day = getOrCreateDay(viewDate);
 
-  if (action === "setWeight") { day.weight = el.value === "" ? null : Number(el.value); saveState(); return; }
+  if (action === "setWeight") {
+    const field = el.dataset.period === "pm" ? "weightPM" : "weightAM";
+    day[field] = el.value === "" ? null : Number(el.value);
+    saveState(); return;
+  }
   if (action === "setSteps") { day.steps = el.value === "" ? null : Number(el.value); saveState(); return; }
   if (action === "setWaterOz") { day.water.oz = el.value === "" ? 0 : Number(el.value); saveState(); return; }
   if (action === "setNotes") { day.notes = el.value; saveState(); return; }
@@ -2673,6 +2892,14 @@ document.getElementById("view-root").addEventListener("input", e => {
   if (action === "filterExercisePickList") {
     const query = el.value.toLowerCase();
     const list = document.getElementById("quickadd-exercise-pick-list");
+    if (list) list.querySelectorAll(".food-pick-row").forEach(row => {
+      row.style.display = row.dataset.exerciseLabel.includes(query) ? "" : "none";
+    });
+    return;
+  }
+  if (action === "filterSwapExercisePickList") {
+    const query = el.value.toLowerCase();
+    const list = document.getElementById("swap-exercise-pick-list");
     if (list) list.querySelectorAll(".food-pick-row").forEach(row => {
       row.style.display = row.dataset.exerciseLabel.includes(query) ? "" : "none";
     });
@@ -2727,11 +2954,18 @@ document.getElementById("view-root").addEventListener("change", e => {
   const el = e.target.closest("[data-action]");
   if (!el) return;
   const action = el.dataset.action;
+
+  if (action === "setComparePhoto") {
+    if (el.dataset.slot === "before") compareBeforeId = el.value; else compareAfterId = el.value;
+    hydrateProgress();
+    return;
+  }
   const day = getOrCreateDay(viewDate);
 
   if (action === "setWeight") {
-    if (bodyWeightEntryUnit === "kg" && day.weight != null) {
-      day.weight = Math.round(day.weight * KG_TO_LB * 10) / 10;
+    const field = el.dataset.period === "pm" ? "weightPM" : "weightAM";
+    if (bodyWeightEntryUnit === "kg" && day[field] != null) {
+      day[field] = Math.round(day[field] * KG_TO_LB * 10) / 10;
       saveState(); render();
     }
     return;
@@ -2862,13 +3096,14 @@ async function exportData() {
 }
 
 function buildHistoryCSV() {
-  const rows = [["Date", "Weight (lb)", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Fiber (g)", "Steps", "Water (oz)", "Completed"]];
+  const rows = [["Date", "Weight AM (lb)", "Weight PM (lb)", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Fiber (g)", "Steps", "Water (oz)", "Completed"]];
   for (const key of Object.keys(state.days).sort()) {
     const d = state.days[key];
     const t = dayTotals(d);
     rows.push([
       key,
-      d.weight ?? "",
+      d.weightAM ?? "",
+      d.weightPM ?? "",
       Math.round(t.cal),
       Math.round(t.protein),
       round1(t.carbs),
