@@ -238,6 +238,19 @@ function round1(n) {
   return Math.round(n * 10) / 10;
 }
 
+// mode "floor": higher is better (protein, fiber) — under target warns/flags red.
+// mode "budget": lower is better (calories, carbs, fat) — over target warns/flags red.
+function macroStatusColor(pct, mode) {
+  if (mode === "floor") {
+    if (pct >= 100) return MACRO_STATUS_COLORS.good;
+    if (pct >= 70) return MACRO_STATUS_COLORS.warn;
+    return MACRO_STATUS_COLORS.over;
+  }
+  if (pct <= 100) return MACRO_STATUS_COLORS.good;
+  if (pct <= 110) return MACRO_STATUS_COLORS.warn;
+  return MACRO_STATUS_COLORS.over;
+}
+
 function ringSVG(pct, color) {
   const r = 24, c = 2 * Math.PI * r;
   const clamped = Math.max(0, Math.min(100, pct));
@@ -570,11 +583,11 @@ function renderToday(day) {
   const activityBadgeClass = day.workout.type || "rest";
 
   const rings = [
-    { label: "cal", value: Math.round(totals.cal), target: calTarget, color: MACRO_RING_COLORS.cal, suffix: "" },
-    { label: "protein", value: Math.round(totals.protein), target: proteinTarget, color: MACRO_RING_COLORS.protein, suffix: "g" },
-    { label: "carbs", value: Math.round(totals.carbs), target: carbsTarget, color: MACRO_RING_COLORS.carbs, suffix: "g" },
-    { label: "fat", value: round1(totals.fat), target: fatTarget, color: MACRO_RING_COLORS.fat, suffix: "g" },
-  ];
+    { label: "cal", value: Math.round(totals.cal), target: calTarget, mode: "budget", suffix: "" },
+    { label: "protein", value: Math.round(totals.protein), target: proteinTarget, mode: "floor", suffix: "g" },
+    { label: "carbs", value: Math.round(totals.carbs), target: carbsTarget, mode: "budget", suffix: "g" },
+    { label: "fat", value: round1(totals.fat), target: fatTarget, mode: "budget", suffix: "g" },
+  ].map(r => ({ ...r, color: macroStatusColor((r.value / r.target) * 100, r.mode) }));
 
   const isToday = viewDate === formatDateKey(new Date());
 
@@ -595,12 +608,12 @@ function renderToday(day) {
         ${rings.map(r => `
           <div class="ring-item">
             ${ringSVG((r.value / r.target) * 100, r.color)}
-            <div class="ring-value">${r.value}/${r.target}${r.suffix}</div>
+            <div class="ring-value" style="color:${r.color};">${r.value}/${r.target}${r.suffix}</div>
             <div class="ring-label">${r.label}</div>
           </div>
         `).join("")}
       </div>
-      <div class="meal-item-macro" style="margin-top:6px;">Fiber: ${round1(totals.fiber)}/${state.targets.fiber}g</div>
+      <div class="meal-item-macro" style="margin-top:6px; color:${macroStatusColor((totals.fiber / state.targets.fiber) * 100, "floor")};">Fiber: ${round1(totals.fiber)}/${state.targets.fiber}g</div>
       <div class="pill-row">
         <div class="activity-chip">Workout — ${workoutStatusLabel(day)}</div>
         <div class="activity-chip">${(day.steps || 0).toLocaleString()} steps</div>

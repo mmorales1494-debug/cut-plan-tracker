@@ -92,8 +92,9 @@ const SUPPLEMENTS = [
 // recovery cost of more structured cardio, on top of the existing run/boulder/resistance days.
 const STEP_TARGET = { min: 8000, max: 10000 };
 
-// Ring colors for the Nutrition macro rings on the Today tab.
-const MACRO_RING_COLORS = { cal: "#4fd1c5", protein: "#378add", carbs: "#ef9f27", fat: "#d4537e" };
+// Status colors for the Nutrition macro rings on the Today tab — green/amber/red
+// based on progress toward target rather than a fixed per-macro hue.
+const MACRO_STATUS_COLORS = { good: "#3ecf8e", warn: "#e0a940", over: "#e0605a" };
 
 // Item catalog: per-unit calories/protein/fat/carbs/fiber. Meal totals recompute live from qty * unit values.
 const ITEM_CATALOG = {
