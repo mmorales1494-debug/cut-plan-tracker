@@ -409,8 +409,6 @@ let mealTabIndex = 0;
 
 function renderMealSwipeCard(day) {
   const mealName = MEAL_ORDER[mealTabIndex];
-  const yesterdayKey = formatDateKey(new Date(parseKey(viewDate).getTime() - 86400000));
-  const hasYesterday = !!state.days[yesterdayKey];
   return `
     <div class="card">
       ${collapsibleCardHeader("meals", "Meals")}
@@ -418,7 +416,6 @@ function renderMealSwipeCard(day) {
       <div class="toggle-pill" style="margin-top:10px;">
         ${MEAL_ORDER.map((m, i) => `<button data-action="setMealTab" data-idx="${i}" class="${i === mealTabIndex ? "active" : ""}">${MEAL_TAB_LABELS[m]}</button>`).join("")}
       </div>
-      ${hasYesterday ? `<button class="btn secondary" data-action="copyYesterdayMeals" style="width:100%; margin-top:8px;">Copy yesterday's meals</button>` : ""}
       <div class="meal-swipe-area" data-swipe="meal" style="margin-top:12px;">
         ${renderMealInner(day, mealName, MEAL_TITLES[mealName])}
       </div>
@@ -2414,21 +2411,6 @@ document.getElementById("view-root").addEventListener("click", e => {
     if (state.favoriteItems[id]) delete state.favoriteItems[id];
     else state.favoriteItems[id] = true;
     saveState(); render(); return;
-  }
-  if (action === "copyYesterdayMeals") {
-    const yesterdayKey = formatDateKey(new Date(parseKey(viewDate).getTime() - 86400000));
-    const yesterday = state.days[yesterdayKey];
-    if (yesterday) {
-      for (const mealName of Object.keys(day.meals)) {
-        const yMeal = yesterday.meals[mealName] || {};
-        for (const [id, qty] of Object.entries(yMeal)) {
-          if (!qty) continue;
-          day.meals[mealName][id] = (day.meals[mealName][id] || 0) + qty;
-        }
-      }
-      saveState();
-    }
-    render(); return;
   }
   if (action === "mealAddItem") {
     const id = el.dataset.id;
