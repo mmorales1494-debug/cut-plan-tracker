@@ -1,4 +1,4 @@
-const CACHE_NAME = "cut-plan-shell-v3";
+const CACHE_NAME = "ledge-shell-v4";
 const SHELL_FILES = [
   "./",
   "./index.html",

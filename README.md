@@ -1,6 +1,6 @@
-# Cut Plan Tracker
+# Ledge
 
-A personal-use PWA for logging meals, water, workouts, weight, and check-ins against a fixed cut plan. No backend — everything lives in the browser's `localStorage` (data) and `IndexedDB` (photos).
+A personal-use PWA for tracking nutrition, lifting, running, and climbing training in one place. No backend — everything lives in the browser's `localStorage` (data) and `IndexedDB` (photos).
 
 ## Deploying to GitHub Pages
 

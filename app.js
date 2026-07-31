@@ -1,5 +1,7 @@
-// Cut Plan Tracker — all app logic. Vanilla JS, no build step.
-
+// Ledge — all app logic. Vanilla JS, no build step.
+// STORAGE_KEY/PHOTO_DB are intentionally left as their original "cutPlan..." values (the
+// app's earlier name) rather than renamed to match — changing them would orphan all
+// existing localStorage/IndexedDB data for anyone who already has the app installed.
 const STORAGE_KEY = "cutPlanState";
 const PHOTO_DB = "cutPlanPhotos";
 const PHOTO_STORE = "photos";
@@ -1667,7 +1669,7 @@ function archiveOldDays() {
   const blob = new Blob([JSON.stringify(archive)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `cut-plan-archive-${formatDateKey(new Date())}.json`;
+  a.download = `ledge-archive-${formatDateKey(new Date())}.json`;
   a.click();
   oldKeys.forEach(k => delete state.days[k]);
   saveState();
@@ -3282,7 +3284,7 @@ async function exportData() {
   const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `cut-plan-backup-${formatDateKey(new Date())}.json`;
+  a.download = `ledge-backup-${formatDateKey(new Date())}.json`;
   a.click();
   if (currentTab === "progress") render();
 }
@@ -3317,7 +3319,7 @@ function exportCSV() {
   const blob = new Blob([buildHistoryCSV()], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `cut-plan-history-${formatDateKey(new Date())}.csv`;
+  a.download = `ledge-history-${formatDateKey(new Date())}.csv`;
   a.click();
 }
 

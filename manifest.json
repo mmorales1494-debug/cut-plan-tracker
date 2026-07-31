@@ -1,6 +1,6 @@
 {
-  "name": "Cut Plan Tracker",
-  "short_name": "Cut Plan",
+  "name": "Ledge",
+  "short_name": "Ledge",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
