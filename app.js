@@ -1845,7 +1845,10 @@ function renderClimbingPhaseNote() {
   const cutNote = (phase.phase === "Strength" || phase.phase === "Power-Endurance")
     ? " Don't sweat the scale this stretch — this phase is about performance, not the deficit."
     : "";
-  return `<div class="meal-item-macro" style="margin-bottom:6px;">Session ${sessionNumber}/${cycleLength} — <strong style="color:var(--text);">${phase.phase}</strong> phase: ${phase.note}${cutNote}</div>`;
+  const typeHint = phase.sessionType
+    ? ` Select <strong style="color:var(--text);">${phase.sessionType}</strong> below.`
+    : " Pick whichever session type below sounds good — this one's about easing off, not hitting a target.";
+  return `<div class="meal-item-macro" style="margin-bottom:6px;">Session ${sessionNumber}/${cycleLength} — <strong style="color:var(--text);">${phase.phase}</strong> phase: ${phase.note}${typeHint}${cutNote}</div>`;
 }
 
 // Standard finger-strength benchmark history: same edge every time, heaviest added (or
