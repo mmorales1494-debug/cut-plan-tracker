@@ -236,6 +236,8 @@ const ITEM_CATALOG = {
   pear:              { label: "Pear (medium)",                cal: 101, protein: 0.6, fat: 0.2, carbs: 27,   fiber: 5.5 },
   plum:              { label: "Plum (medium)",                cal: 30,  protein: 0.5, fat: 0.2, carbs: 7.5,  fiber: 0.9 },
   kiwi:              { label: "Kiwi (1 medium)",              cal: 42,  protein: 0.8, fat: 0.4, carbs: 10,   fiber: 2.1 },
+  guava:             { label: "Guava (1 medium)",             cal: 37,  protein: 1.4, fat: 0.5, carbs: 7.9,  fiber: 3 },
+  passion_fruit:     { label: "Passion fruit (1 piece)",      cal: 18,  protein: 0.4, fat: 0.1, carbs: 4.2,  fiber: 1.9 },
   cherries:          { label: "Cherries (1 cup)",             cal: 87,  protein: 1.5, fat: 0.3, carbs: 22,   fiber: 2.9 },
   grapefruit:        { label: "Grapefruit (half)",            cal: 52,  protein: 1,   fat: 0.2, carbs: 13,   fiber: 2 },
   raisins:           { label: "Raisins (1/4 cup)",            cal: 123, protein: 1.3, fat: 0.2, carbs: 33,   fiber: 1.6 },
@@ -403,6 +405,24 @@ const CLIMB_OUTCOMES = ["Send", "Flash", "Attempt"];
 // Boulder session modes — matches the standard power/limit vs volume vs power-endurance
 // training split so session type is tracked alongside minutes and the climb log.
 const BOULDER_SESSION_TYPES = ["Power/Limit", "Volume/Mileage", "Power-Endurance"];
+
+// Periodization cycle keyed to actual climbing SESSION COUNT rather than calendar weeks —
+// deliberately, since climbing days can't be scheduled far in advance for everyone. The
+// phase advances only when a session is actually logged, so an irregular week (or month)
+// just doesn't move the cycle forward instead of falling "behind" or needing to be reset.
+// sessionType null (Deload) has no forced type — the least-done-in-4-weeks balancer takes
+// over as a tiebreaker for what to climb that day.
+const CLIMBING_PHASE_PLAN = [
+  { phase: "Base", sessions: 4, sessionType: "Volume/Mileage",
+    note: "Volume and movement — lots of moderate climbs, build the base back up." },
+  { phase: "Strength", sessions: 3, sessionType: "Power/Limit",
+    note: "Fewer, harder attempts — full rest between tries, quality over quantity." },
+  { phase: "Power-Endurance", sessions: 2, sessionType: "Power-Endurance",
+    note: "Strings of hard moves back to back — sustaining power, not just raw strength." },
+  { phase: "Deload", sessions: 1, sessionType: null,
+    note: "Lighter session — easy volume, enjoy the movement, let the tank refill." },
+];
+const CLIMBING_CYCLE_LENGTH = CLIMBING_PHASE_PLAN.reduce((sum, p) => sum + p.sessions, 0);
 
 // Grid trackers for the two structured session types (Volume/Mileage just uses the plain
 // climb log already built). restTrigger "cell" = rest after every marked box (Power/Limit —

@@ -99,6 +99,7 @@ function loadState() {
           d.workout.startedAt = null;
           d.workout.durationMinutes = null;
         }
+        if (d.maxHangTest === undefined) d.maxHangTest = null;
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
@@ -231,6 +232,7 @@ function getOrCreateDay(dateKey) {
       weightAM: null,
       weightPM: null,
       waist: null,
+      maxHangTest: null,
       notes: "",
       completed: false,
       steps: null,
@@ -613,6 +615,7 @@ function renderPullSuggestion(day) {
     <div class="card">
       <h2>Climbing Strength</h2>
       <div class="meal-item-macro">Good day to tack on some pulling work: 3-5 sets of weighted pull-ups (bar), or 3×8-10 cable rows/lat pulldowns — bar/machine grips only, skip the block so fingers stay recovered.</div>
+      <div class="meal-item-macro" style="margin-top:8px;">Balance it out: a few sets of push-ups, tricep pushdowns, or band external rotations — climbers tend to overdevelop pull vs. push, and that imbalance is what drives elbow tendinopathy.</div>
     </div>
   `;
 }
@@ -732,6 +735,7 @@ function renderToday(day) {
     <div class="card">
       ${collapsibleCardHeader("water", "Water")}
       ${state.collapsedCards.water ? "" : `
+      <div class="meal-item-macro" style="margin-top:10px;">Plain water (and other zero/near-zero-calorie fluids like black coffee or tea) only — juice, shakes, milk, soda, and alcohol are already tracked in your meal log, so they don't need to be counted here too.</div>
       <div class="water-track" style="margin-top:10px;"><div class="water-fill" style="width:${waterPct}%"></div></div>
       <div class="field" style="margin-top:10px;">
         <label>${waterEntryUnit === "ml" ? "Milliliters logged today" : "Ounces logged today"}</label>
@@ -795,6 +799,7 @@ function renderToday(day) {
           <div class="field"><label>PM</label><input type="number" inputmode="decimal" step="0.1" data-action="setWeight" data-period="pm" value="${day.weightPM ?? ""}"></div>
         </div>
       </div>
+      <div class="field"><label>Waist (in)</label><input type="number" inputmode="decimal" step="0.1" data-action="setWaist" value="${day.waist ?? ""}"></div>
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
       `}
     </div>
@@ -1106,7 +1111,7 @@ function renderWorkoutBody(day) {
       ${renderWorkoutTimerControl(day)}
       ${warmupChecklist}
       ${restBanner}
-      ${!w.boulder.sessionType && suggestNextSessionType() ? `<div class="meal-item-macro" style="margin-bottom:6px;">Suggested: <strong style="color:var(--text);">${suggestNextSessionType()}</strong> (least done in the last 4 weeks)</div>` : ""}
+      ${!w.boulder.sessionType ? renderClimbingPhaseNote() : ""}
       <div class="field">
         <label>Session type</label>
         <div class="toggle-pill">
@@ -1579,6 +1584,11 @@ function renderProgressShell() {
       <div id="weight-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
     </div>
     <div class="card">
+      <h2>Waist trend</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">A steadier read on visible fat loss than the scale — track this if the gut is what you actually care about.</div>
+      <div id="waist-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
+    </div>
+    <div class="card">
       <h2>Photos</h2>
       <input type="file" accept="image/*" capture="environment" data-action="addPhoto" style="margin-bottom:10px;">
       <div id="photo-grid-slot" class="photo-grid"></div>
@@ -1795,15 +1805,76 @@ function renderWeeklyReportCard() {
   `;
 }
 
-// Suggests which session type to train next, based on which of the three has been done
-// least in the last 4 weeks — but only once fingers have actually recovered from the last
-// finger-intensive session, so it never nudges toward more climbing before that's safe.
+function isCompletedBoulderSession(d) {
+  return d.workout && d.workout.type === "boulder" && (Number(d.workout.boulder.minutes) > 0 || d.workout.boulder.climbs.length > 0);
+}
+
+// Position in the session-count-based periodization cycle (see CLIMBING_PHASE_PLAN) as of
+// asOfKey — counts completed sessions strictly before that date, so "today" is whatever
+// session comes next in the cycle, however long it's actually been since the last one.
+function climbingPhaseInfoAsOf(asOfKey) {
+  const priorSessions = Object.entries(state.days).filter(([k, d]) => k < asOfKey && isCompletedBoulderSession(d)).length;
+  const sessionNumber = (priorSessions % CLIMBING_CYCLE_LENGTH) + 1;
+  let cumulative = 0;
+  for (const p of CLIMBING_PHASE_PLAN) {
+    cumulative += p.sessions;
+    if (sessionNumber <= cumulative) return { sessionNumber, cycleLength: CLIMBING_CYCLE_LENGTH, phase: p };
+  }
+  return { sessionNumber, cycleLength: CLIMBING_CYCLE_LENGTH, phase: CLIMBING_PHASE_PLAN[CLIMBING_PHASE_PLAN.length - 1] };
+}
+
+// Suggests which session type to train next — primarily driven by where today's session
+// falls in the periodization cycle; the least-done-in-4-weeks balance only kicks in during
+// Deload sessions (no forced type) as a tiebreaker for variety. Still gated on finger
+// recovery so it never nudges toward more climbing before that's safe.
 function suggestNextSessionType() {
   if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return null;
+  const { phase } = climbingPhaseInfoAsOf(viewDate);
+  if (phase.sessionType) return phase.sessionType;
   const counts = recentSessionTypeCounts(28);
   let best = BOULDER_SESSION_TYPES[0];
   for (const t of BOULDER_SESSION_TYPES) if (counts[t] < counts[best]) best = t;
   return best;
+}
+
+// One-line phase note shown on boulder days — what this session's focus is, and (during the
+// harder Strength/Power-Endurance stretches) a reminder not to stress about the scale.
+function renderClimbingPhaseNote() {
+  if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return "";
+  const { sessionNumber, cycleLength, phase } = climbingPhaseInfoAsOf(viewDate);
+  const cutNote = (phase.phase === "Strength" || phase.phase === "Power-Endurance")
+    ? " Don't sweat the scale this stretch — this phase is about performance, not the deficit."
+    : "";
+  return `<div class="meal-item-macro" style="margin-bottom:6px;">Session ${sessionNumber}/${cycleLength} — <strong style="color:var(--text);">${phase.phase}</strong> phase: ${phase.note}${cutNote}</div>`;
+}
+
+// Standard finger-strength benchmark history: same edge every time, heaviest added (or
+// lightest assisted, negative) weight held for a target time — the climbing equivalent of
+// the estimated-1RM chart already tracked for lifting.
+function maxHangTestHistory() {
+  return Object.entries(state.days)
+    .filter(([, d]) => d.maxHangTest && d.maxHangTest.edgeMM > 0 && d.maxHangTest.holdSeconds > 0)
+    .map(([k, d]) => ({ dateKey: k, ...d.maxHangTest }))
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+}
+
+function renderMaxHangTestCard(day) {
+  const test = day.maxHangTest;
+  const history = maxHangTestHistory();
+  const chart = history.length > 1 ? lineChartSVG([history.map(h => ({ x: h.dateKey, y: h.addedWeightLb }))], ["#4fd1c5"]) : "";
+  return `
+    <div class="card">
+      <h2>Max Hang Test</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">Same edge every time — heaviest added (or lightest assisted) weight you can hold for the target time. Test every few weeks, not every session.</div>
+      <div class="two-col">
+        <div class="field"><label>Edge (mm)</label><input type="number" inputmode="numeric" data-action="setMaxHangField" data-field="edgeMM" value="${test?.edgeMM ?? 20}"></div>
+        <div class="field"><label>Added weight (lb)</label><input type="number" inputmode="decimal" step="0.5" data-action="setMaxHangField" data-field="addedWeightLb" value="${test?.addedWeightLb ?? ""}"></div>
+      </div>
+      <div class="field"><label>Hold time (sec)</label><input type="number" inputmode="numeric" data-action="setMaxHangField" data-field="holdSeconds" value="${test?.holdSeconds ?? 7}"></div>
+      ${history.length > 1 ? `<div class="chart-wrap" style="margin-top:10px;">${chart}</div>`
+        : history.length === 1 ? `<div class="empty-state" style="margin-top:10px;">Log another test in a few weeks to see a trend</div>` : ""}
+    </div>
+  `;
 }
 
 function renderGradePyramid() {
@@ -1848,6 +1919,15 @@ function weightSeries() {
   return Object.entries(state.days)
     .map(([k, d]) => ({ x: k, y: trackedWeightForDay(d) }))
     .filter(p => p.y != null)
+    .sort((a, b) => a.x.localeCompare(b.x));
+}
+
+// Waist circumference over time — a steadier, more direct read on visible fat loss than
+// scale weight, which bounces with water/sodium/glycogen day to day.
+function waistSeries() {
+  return Object.entries(state.days)
+    .filter(([, d]) => d.waist != null && d.waist !== "")
+    .map(([k, d]) => ({ x: k, y: Number(d.waist) }))
     .sort((a, b) => a.x.localeCompare(b.x));
 }
 
@@ -1979,6 +2059,16 @@ function hydrateProgress() {
   } else {
     const avg = rollingAverageSeries(series, 7);
     slot.innerHTML = lineChartSVG([series, avg], ["#9aa1af", "#4fd1c5"]);
+  }
+
+  const waistSlot = document.getElementById("waist-chart-slot");
+  if (waistSlot) {
+    const wSeries = waistSeries();
+    if (wSeries.length < 2) {
+      waistSlot.innerHTML = `<div class="empty-state">Log at least 2 days of waist measurement to see a trend</div>`;
+    } else {
+      waistSlot.innerHTML = lineChartSVG([wSeries], ["#4fd1c5"]);
+    }
   }
 
   getAllPhotos().then(photos => {
@@ -2285,6 +2375,7 @@ function tickTimer() {
 }
 
 function renderClimbing() {
+  const day = getOrCreateDay(viewDate);
   const isIdle = timerPhase === null;
   const isDone = timerPhase === "done";
   const showConfig = isIdle;
@@ -2382,6 +2473,7 @@ function renderClimbing() {
             : `<button class="btn" data-action="startTimer" style="flex:1;">Resume</button><button class="btn secondary" data-action="resetTimer" style="flex:1;">Reset</button>`}
       </div>
     </div>
+    ${renderMaxHangTestCard(day)}
     ${renderWeeklyReportCard()}
     ${renderGradePyramid()}
     ${renderClimbingProgressChart()}
@@ -2952,6 +3044,13 @@ document.getElementById("view-root").addEventListener("input", e => {
     saveState(); return;
   }
   if (action === "setSteps") { day.steps = el.value === "" ? null : Number(el.value); saveState(); return; }
+  if (action === "setWaist") { day.waist = el.value === "" ? null : Number(el.value); saveState(); return; }
+  if (action === "setMaxHangField") {
+    if (!day.maxHangTest) day.maxHangTest = { edgeMM: 20, addedWeightLb: 0, holdSeconds: 7 };
+    const field = el.dataset.field;
+    day.maxHangTest[field] = el.value === "" ? (field === "addedWeightLb" ? 0 : null) : Number(el.value);
+    saveState(); return;
+  }
   if (action === "setWaterOz") { day.water.oz = el.value === "" ? 0 : Number(el.value); saveState(); return; }
   if (action === "setNotes") { day.notes = el.value; saveState(); return; }
   if (action === "setExerciseNote") { state.exerciseNotes[el.dataset.name] = el.value; saveState(); return; }
@@ -3177,7 +3276,7 @@ async function exportData() {
 }
 
 function buildHistoryCSV() {
-  const rows = [["Date", "Weight AM (lb)", "Weight PM (lb)", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Fiber (g)", "Steps", "Water (oz)", "Completed"]];
+  const rows = [["Date", "Weight AM (lb)", "Weight PM (lb)", "Waist (in)", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Fiber (g)", "Steps", "Water (oz)", "Max Hang Edge (mm)", "Max Hang Weight (lb)", "Max Hang Hold (s)", "Completed"]];
   for (const key of Object.keys(state.days).sort()) {
     const d = state.days[key];
     const t = dayTotals(d);
@@ -3185,6 +3284,7 @@ function buildHistoryCSV() {
       key,
       d.weightAM ?? "",
       d.weightPM ?? "",
+      d.waist ?? "",
       Math.round(t.cal),
       Math.round(t.protein),
       round1(t.carbs),
@@ -3192,6 +3292,9 @@ function buildHistoryCSV() {
       round1(t.fiber),
       d.steps ?? "",
       d.water?.oz ?? "",
+      d.maxHangTest?.edgeMM ?? "",
+      d.maxHangTest?.addedWeightLb ?? "",
+      d.maxHangTest?.holdSeconds ?? "",
       d.completed ? "yes" : "no",
     ]);
   }
