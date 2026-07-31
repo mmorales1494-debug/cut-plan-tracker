@@ -1111,7 +1111,7 @@ function renderWorkoutBody(day) {
       ${renderWorkoutTimerControl(day)}
       ${warmupChecklist}
       ${restBanner}
-      ${!w.boulder.sessionType ? renderClimbingPhaseNote() : ""}
+      ${renderClimbingPhaseNote(day)}
       <div class="field">
         <label>Session type</label>
         <div class="toggle-pill">
@@ -1839,15 +1839,17 @@ function suggestNextSessionType() {
 
 // One-line phase note shown on boulder days — what this session's focus is, and (during the
 // harder Strength/Power-Endurance stretches) a reminder not to stress about the scale.
-function renderClimbingPhaseNote() {
+function renderClimbingPhaseNote(day) {
   if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return "";
   const { sessionNumber, cycleLength, phase } = climbingPhaseInfoAsOf(viewDate);
   const cutNote = (phase.phase === "Strength" || phase.phase === "Power-Endurance")
     ? " Don't sweat the scale this stretch — this phase is about performance, not the deficit."
     : "";
-  const typeHint = phase.sessionType
-    ? ` Select <strong style="color:var(--text);">${phase.sessionType}</strong> below.`
-    : " Pick whichever session type below sounds good — this one's about easing off, not hitting a target.";
+  const typeHint = day.workout.boulder.sessionType
+    ? ""
+    : phase.sessionType
+      ? ` Select <strong style="color:var(--text);">${phase.sessionType}</strong> below.`
+      : " Pick whichever session type below sounds good — this one's about easing off, not hitting a target.";
   return `<div class="meal-item-macro" style="margin-bottom:6px;">Session ${sessionNumber}/${cycleLength} — <strong style="color:var(--text);">${phase.phase}</strong> phase: ${phase.note}${typeHint}${cutNote}</div>`;
 }
 
