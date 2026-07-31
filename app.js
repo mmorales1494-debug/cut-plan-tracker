@@ -95,6 +95,10 @@ function loadState() {
           d.weightAM = d.weight != null ? d.weight : null;
           d.weightPM = null;
         }
+        if (d.workout && d.workout.startedAt === undefined) {
+          d.workout.startedAt = null;
+          d.workout.durationMinutes = null;
+        }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
@@ -221,6 +225,8 @@ function getOrCreateDay(dateKey) {
         core: scheduled === "run" ? CORE_EXERCISES.map(ce => ({ name: ce.name, type: ce.type, sets: [] })) : [],
         run: { miles: "", minutes: "" },
         boulder: { minutes: "", climbs: [], sessionType: null, warmupDone: [], grid: [], rating: null },
+        startedAt: null,
+        durationMinutes: null,
       },
       weightAM: null,
       weightPM: null,
@@ -938,6 +944,35 @@ function renderBoulderGrid(sessionType, grid) {
   `;
 }
 
+// Start/End session timer, shared by resistance and boulder — resistance has no other
+// duration input so this becomes its only accurate time source; boulder uses it to fill
+// the existing "Session length" field instead of you having to guess/estimate it.
+function renderWorkoutTimerControl(day) {
+  const w = day.workout;
+  if (w.startedAt) {
+    if (!workoutTimerIntervalId) {
+      workoutTimerIntervalId = setInterval(() => {
+        const clockEl = document.getElementById("workout-timer-clock");
+        if (!clockEl) { clearInterval(workoutTimerIntervalId); workoutTimerIntervalId = null; return; }
+        clockEl.textContent = formatMMSS((Date.now() - w.startedAt) / 1000);
+      }, 1000);
+    }
+    return `
+      <div class="timer-display" style="padding:10px 0; margin-bottom:12px;">
+        <div class="timer-phase">Workout in progress</div>
+        <div class="timer-clock" id="workout-timer-clock" style="font-size:28px;">${formatMMSS((Date.now() - w.startedAt) / 1000)}</div>
+        <button class="btn secondary" data-action="endWorkoutTimer" style="margin-top:8px;">⏹ End workout</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="row" style="margin-bottom:12px; gap:8px;">
+      <button class="btn secondary" data-action="startWorkoutTimer" style="flex:1;">▶ Start workout</button>
+      ${w.durationMinutes != null ? `<div class="activity-chip">Last: ${Math.round(w.durationMinutes)} min</div>` : ""}
+    </div>
+  `;
+}
+
 function renderWorkoutBody(day) {
   const w = day.workout;
   if (w.type === "resistance") {
@@ -950,7 +985,7 @@ function renderWorkoutBody(day) {
         <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
       </div>
     ` : "";
-    return restBanner + routineHeader + w.exercises.map((ex, exIdx) => {
+    return renderWorkoutTimerControl(day) + restBanner + routineHeader + w.exercises.map((ex, exIdx) => {
       const last = lastSessionFor(ex.name, viewDate);
       const lastFullSets = lastFullSessionSets(ex.name, viewDate);
       return `
@@ -1068,6 +1103,7 @@ function renderWorkoutBody(day) {
       `).join("")}
     `;
     return `
+      ${renderWorkoutTimerControl(day)}
       ${warmupChecklist}
       ${restBanner}
       ${!w.boulder.sessionType && suggestNextSessionType() ? `<div class="meal-item-macro" style="margin-bottom:6px;">Suggested: <strong style="color:var(--text);">${suggestNextSessionType()}</strong> (least done in the last 4 weeks)</div>` : ""}
@@ -1836,6 +1872,50 @@ function requiredDailyDeltaKcal(goal) {
   return (totalChangeLb * KCAL_PER_LB) / (goal.weeks * 7);
 }
 
+// Standard kcal/min for a given MET and bodyweight: MET x 3.5 x kg / 200.
+function kcalFromMET(met, weightKg, minutes) {
+  if (!minutes || minutes <= 0) return 0;
+  return met * 3.5 * weightKg / 200 * minutes;
+}
+
+// ACSM running metabolic equation, scaled by actual pace instead of a flat per-session
+// number — VO2(ml/kg/min) = 0.2 x speed(m/min) + 3.5, MET = VO2 / 3.5.
+function runningMET(paceMph) {
+  if (!paceMph || paceMph <= 0) return 0;
+  const speedMPerMin = paceMph * 26.8224;
+  const vo2 = 0.2 * speedMPerMin + 3.5;
+  return vo2 / 3.5;
+}
+
+// Sets that actually have both a weight and a rep count logged — placeholder rows the
+// user added but hasn't filled in yet shouldn't count toward the calorie estimate.
+function loggedResistanceSetCount(day) {
+  return day.workout.exercises.reduce((count, ex) =>
+    count + ex.sets.filter(s => s.weight !== "" && s.weight != null && s.reps !== "" && s.reps != null).length, 0);
+}
+
+// Exercise calorie bonus via MET x bodyweight x time, using whatever's actually been
+// logged today (sets, minutes, pace) rather than a flat number the instant a workout
+// type is picked — so the allowance grows as the session is logged, not all at once.
+function workoutCalorieBonus(day, weightLb) {
+  const weightKg = weightLb / KG_TO_LB;
+  const w = day.workout;
+  if (w.type === "resistance") {
+    const minutes = w.durationMinutes ?? (loggedResistanceSetCount(day) * MINUTES_PER_SET_ESTIMATE);
+    return kcalFromMET(RESISTANCE_MET, weightKg, minutes);
+  }
+  if (w.type === "run") {
+    const miles = Number(w.run.miles) || 0;
+    const minutes = Number(w.run.minutes) || 0;
+    const paceMph = minutes > 0 ? miles / (minutes / 60) : 0;
+    return kcalFromMET(runningMET(paceMph), weightKg, minutes);
+  }
+  if (w.type === "boulder") {
+    return kcalFromMET(BOULDER_MET, weightKg, Number(w.boulder.minutes) || 0);
+  }
+  return 0;
+}
+
 // Returns a whole-number calorie target for the day if a goal is set, else null
 // (callers fall back to the manual calRest/calTrain targets).
 function calorieTargetFor(day) {
@@ -1843,8 +1923,8 @@ function calorieTargetFor(day) {
   if (!goal) return null;
   const weight = latestKnownWeight() ?? goal.startWeight;
   const base = bmr(weight, goal.heightIn, goal.age, goal.sex) * GOAL_ACTIVITY_MULTIPLIER;
-  const exerciseBonus = WORKOUT_KCAL_BONUS[day.workout.type] || 0;
-  const stepsBonus = (day.steps || 0) * STEP_KCAL_PER_STEP;
+  const exerciseBonus = workoutCalorieBonus(day, weight);
+  const stepsBonus = kcalFromMET(WALK_MET, weight / KG_TO_LB, (day.steps || 0) / STEPS_PER_MINUTE_WALKING);
   const delta = requiredDailyDeltaKcal(goal);
   return Math.round(base + exerciseBonus + stepsBonus + delta);
 }
@@ -2076,6 +2156,8 @@ let restTimerIntervalId = null;
 let coreStopwatchKey = null; // `${exIdx}-${setIdx}` of the currently running stopwatch, or null
 let coreStopwatchElapsed = 0;
 let coreStopwatchIntervalId = null;
+
+let workoutTimerIntervalId = null; // ticks the live clock while a resistance/boulder session is in progress
 
 function startRestTimer(seconds) {
   if (!seconds || seconds <= 0) return;
@@ -2467,6 +2549,23 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "pauseTimer") { pauseTimer(); return; }
   if (action === "resetTimer") { resetTimer(); return; }
   if (action === "skipRestTimer") { skipRestTimer(); return; }
+  if (action === "startWorkoutTimer") {
+    if (day.workout.durationMinutes != null && !confirm("Start a new workout timer? This replaces the previous session's tracked time.")) return;
+    if (workoutTimerIntervalId) { clearInterval(workoutTimerIntervalId); workoutTimerIntervalId = null; }
+    day.workout.startedAt = Date.now();
+    day.workout.durationMinutes = null;
+    saveState(); render(); return;
+  }
+  if (action === "endWorkoutTimer") {
+    if (workoutTimerIntervalId) { clearInterval(workoutTimerIntervalId); workoutTimerIntervalId = null; }
+    if (day.workout.startedAt) {
+      const minutes = (Date.now() - day.workout.startedAt) / 60000;
+      day.workout.durationMinutes = Math.round(minutes * 10) / 10;
+      day.workout.startedAt = null;
+      if (day.workout.type === "boulder") day.workout.boulder.minutes = Math.round(minutes);
+    }
+    saveState(); render(); return;
+  }
   if (action === "setWeightUnit") {
     state.weightUnit = el.dataset.unit;
     saveState(); render(); return;

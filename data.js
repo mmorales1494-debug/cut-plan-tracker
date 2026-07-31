@@ -22,8 +22,17 @@ const BOTTLE_OZ = 32;
 // similar in spirit to MyFitnessPal's adaptive daily goal).
 const KCAL_PER_LB = 3500; // standard approximation for 1 lb of body fat
 const GOAL_ACTIVITY_MULTIPLIER = 1.2; // sedentary baseline — exercise/steps bonuses cover the rest
-const STEP_KCAL_PER_STEP = 0.04;
-const WORKOUT_KCAL_BONUS = { rest: 0, resistance: 150, run: 250, boulder: 300 };
+
+// MET (Metabolic Equivalent of Task) values — the standard exercise-science unit for
+// activity energy cost (kcal/min = MET x 3.5 x bodyweight-kg / 200), same approach used
+// under the hood by Apple Watch/Fitbit/MyFitnessPal. Values are 2011 Compendium of
+// Physical Activities ballparks for "vigorous effort," not literal weight-moved.
+const RESISTANCE_MET = 6.0; // resistance training, vigorous effort
+const BOULDER_MET = 6.5; // bouldering session-average MET — high per-attempt intensity
+// tempered by the rest between attempts (unlike sustained roped climbing)
+const WALK_MET = 3.0; // casual walking pace, for the steps bonus
+const STEPS_PER_MINUTE_WALKING = 100; // average cadence, to convert steps to minutes for the MET formula
+const MINUTES_PER_SET_ESTIMATE = 3; // typical work+rest time per logged resistance set
 
 // Quick-log grade buttons for the bouldering climb log — V7+ catches anything harder.
 const CLIMBING_GRADES = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7+"];
