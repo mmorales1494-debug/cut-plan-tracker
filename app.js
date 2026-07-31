@@ -803,6 +803,8 @@ function renderToday(day) {
       <div class="field"><label>Notes</label><textarea data-action="setNotes">${day.notes || ""}</textarea></div>
       `}
     </div>
+
+    <button class="btn secondary" data-action="clearDay" style="width:100%; margin-top:4px;">Clear this day</button>
   `;
 }
 
@@ -2543,6 +2545,11 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "reopenDay") {
     day.completed = false;
+    saveState(); render(); return;
+  }
+  if (action === "clearDay") {
+    if (!confirm(`Clear all of ${niceDate(viewDate)}'s data? This can't be undone.`)) return;
+    delete state.days[viewDate];
     saveState(); render(); return;
   }
   if (action === "mealQty") {
