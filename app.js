@@ -265,7 +265,15 @@ function getOrCreateDay(dateKey) {
     if (scheduled === "resistance") populateResistanceExercises(state.days[dateKey]);
     saveState();
   }
-  return state.days[dateKey];
+  const day = state.days[dateKey];
+  // Self-heal: a day created before the stretching feature shipped got backfilled with an
+  // empty stretchIds by the migration (no retroactive fabrication for old days) — give it
+  // a real pick the first time it's actually accessed, so today's card isn't just blank.
+  if (!day.stretchIds || !day.stretchIds.length) {
+    day.stretchIds = pickDailyStretches(dateKey);
+    saveState();
+  }
+  return day;
 }
 
 function isTrainingDay(day) {
