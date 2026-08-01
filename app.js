@@ -102,6 +102,10 @@ function loadState() {
           d.workout.durationMinutes = null;
         }
         if (d.maxHangTest === undefined) d.maxHangTest = null;
+        if (d.stretchIds === undefined) {
+          d.stretchIds = [];
+          d.stretchesDone = {};
+        }
       }
       if (!parsed.checklistItems) parsed.checklistItems = SUPPLEMENTS.map(s => ({ ...s }));
       // backward compat: old checklist items predating the recurring flag default to recurring (matches old behavior)
@@ -212,6 +216,23 @@ function populateResistanceExercises(day) {
   state.nextRoutineIndex = (idx + 1) % pool.length;
 }
 
+// Picks today's stretch set from the library, prioritizing whichever ones haven't been
+// included in a day's set most recently (or ever) — the same "least done recently" pattern
+// used for exercise-swap suggestions, so the daily 10 rotate instead of repeating.
+function pickDailyStretches(dateKey) {
+  const lastPicked = {};
+  for (const [k, d] of Object.entries(state.days)) {
+    if (k < dateKey && d.stretchIds) {
+      for (const id of d.stretchIds) {
+        if (!lastPicked[id] || k > lastPicked[id]) lastPicked[id] = k;
+      }
+    }
+  }
+  return STRETCH_LIBRARY.map(s => s.id)
+    .sort((a, b) => (lastPicked[a] || "").localeCompare(lastPicked[b] || ""))
+    .slice(0, DAILY_STRETCH_COUNT);
+}
+
 function getOrCreateDay(dateKey) {
   if (!state.days[dateKey]) {
     const previousDay = state.days[addDays(dateKey, -1)];
@@ -238,6 +259,8 @@ function getOrCreateDay(dateKey) {
       notes: "",
       completed: false,
       steps: null,
+      stretchIds: pickDailyStretches(dateKey),
+      stretchesDone: {},
     };
     if (scheduled === "resistance") populateResistanceExercises(state.days[dateKey]);
     saveState();
@@ -652,6 +675,33 @@ function collapsibleCardHeader(cardId, title) {
   return `<div class="row card-header-row" data-action="toggleCardCollapse" data-card="${cardId}"><h2 style="margin:0;">${title}</h2><span class="collapse-chevron">${collapsed ? "▸" : "▾"}</span></div>`;
 }
 
+function renderStretchingCard(day) {
+  const stretches = day.stretchIds.map(id => STRETCH_LIBRARY.find(s => s.id === id)).filter(Boolean);
+  if (!stretches.length) return "";
+  const doneCount = stretches.filter(s => day.stretchesDone[s.id]).length;
+  return `
+    <div class="card">
+      ${collapsibleCardHeader("stretching", "Stretching")}
+      ${state.collapsedCards.stretching ? "" : `
+      <div class="meal-item-macro" style="margin-top:10px; margin-bottom:8px;">${doneCount}/${stretches.length} done — ${STRETCH_HOLD_SECONDS}s each. Rotates daily so it's not the same 10 every time.</div>
+      ${stretches.map(s => {
+        const done = !!day.stretchesDone[s.id];
+        const running = stretchTimerId === s.id;
+        return `
+        <div class="meal-item">
+          <button class="todo-check ${done ? "checked" : ""}" data-action="toggleStretchDone" data-id="${s.id}"></button>
+          <div class="todo-label">${s.label}<div class="meal-item-macro">${s.cue}</div></div>
+          ${running
+            ? `<span class="meal-item-macro" id="stretch-clock-${s.id}" style="font-weight:600; color:var(--text); flex-shrink:0;">${stretchTimerRemaining}s</span>`
+            : `<button class="btn secondary" data-action="startStretchTimer" data-id="${s.id}" style="flex-shrink:0;">Start</button>`}
+        </div>
+        `;
+      }).join("")}
+      `}
+    </div>
+  `;
+}
+
 function renderToday(day) {
   const totals = dayTotals(day);
   const calTarget = calorieTargetFor(day) ?? (isTrainingDay(day) ? state.targets.calTrain : state.targets.calRest);
@@ -772,6 +822,8 @@ function renderToday(day) {
       <div class="meal-item-macro" style="margin-top:6px;">target ${STEP_TARGET.min.toLocaleString()}-${STEP_TARGET.max.toLocaleString()} steps</div>
       `}
     </div>
+
+    ${renderStretchingCard(day)}
 
     <div class="card">
       ${collapsibleCardHeader("workout", "Workout")}
@@ -2258,6 +2310,10 @@ let coreStopwatchIntervalId = null;
 
 let workoutTimerIntervalId = null; // ticks the live clock while a resistance/boulder session is in progress
 
+let stretchTimerId = null; // stretch id with its 60s countdown running, or null
+let stretchTimerRemaining = 0;
+let stretchTimerIntervalId = null;
+
 function startRestTimer(seconds) {
   if (!seconds || seconds <= 0) return;
   restTimerRemaining = seconds;
@@ -2988,6 +3044,33 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "toggleSupplement") {
     day.supplements[el.dataset.id] = !day.supplements[el.dataset.id];
     saveState(); render(); return;
+  }
+  if (action === "toggleStretchDone") {
+    const id = el.dataset.id;
+    day.stretchesDone[id] = !day.stretchesDone[id];
+    saveState(); render(); return;
+  }
+  if (action === "startStretchTimer") {
+    const id = el.dataset.id;
+    if (stretchTimerIntervalId) clearInterval(stretchTimerIntervalId);
+    stretchTimerId = id;
+    stretchTimerRemaining = STRETCH_HOLD_SECONDS;
+    stretchTimerIntervalId = setInterval(() => {
+      stretchTimerRemaining -= 1;
+      if (stretchTimerRemaining <= 0) {
+        clearInterval(stretchTimerIntervalId);
+        stretchTimerIntervalId = null;
+        stretchTimerId = null;
+        day.stretchesDone[id] = true;
+        beep(880, 150);
+        setTimeout(() => beep(880, 250), 200);
+        saveState(); render();
+      } else {
+        const clockEl = document.getElementById(`stretch-clock-${id}`);
+        if (clockEl) clockEl.textContent = `${stretchTimerRemaining}s`;
+      }
+    }, 1000);
+    render(); return;
   }
   if (action === "addChecklistItem") { addChecklistItemFromInput(); return; }
   if (action === "removeChecklistItem") {

@@ -17,6 +17,33 @@ const DEFAULT_TARGETS = {
 
 const BOTTLE_OZ = 32;
 
+// Daily stretching pool — bigger than the number shown per day, so the daily set can
+// rotate by picking whichever haven't been done most recently (same pattern already
+// used for exercise-swap suggestions and the climbing phase balance), covering more
+// ground across a week instead of the same 10 every day.
+const STRETCH_LIBRARY = [
+  { id: "wrist_flexor", label: "Wrist flexor stretch", cue: "Arm out, palm up — gently pull fingers back with the other hand." },
+  { id: "wrist_extensor", label: "Wrist extensor stretch", cue: "Arm out, palm down — gently press the back of the hand down." },
+  { id: "shoulder_cross_body", label: "Cross-body shoulder stretch", cue: "Pull one arm across your chest with the other arm." },
+  { id: "chest_doorway", label: "Doorway chest stretch", cue: "Forearm on a door frame, step forward until you feel it in the chest." },
+  { id: "shoulder_ext_rotation", label: "Shoulder external rotation stretch", cue: "Elbow at 90°, gently rotate the forearm outward with light assistance." },
+  { id: "overhead_triceps_lat", label: "Overhead triceps/lat stretch", cue: "Reach one arm overhead, bend the elbow, gently pull it behind your head." },
+  { id: "thoracic_opener", label: "Thoracic spine opener", cue: "Arms out or overhead, gently arch and open through the upper back." },
+  { id: "neck_traps", label: "Neck/upper trap stretch", cue: "Tilt your head to one side with light hand pressure — feel it in the opposite neck/trap." },
+  { id: "hip_flexor_lunge", label: "Hip flexor stretch", cue: "Half-kneeling lunge position, push the hips forward gently." },
+  { id: "figure_four_glute", label: "Figure-4 glute stretch", cue: "Ankle on opposite knee, sit back until you feel it in the glute." },
+  { id: "hip_external_rotation", label: "Hip external rotation stretch", cue: "Seated or lying, gently rotate the hip outward, pigeon-style." },
+  { id: "hamstring", label: "Hamstring stretch", cue: "Leg extended, hinge forward from the hips, keep the back flat." },
+  { id: "quad", label: "Quad stretch", cue: "Standing, pull one heel toward the glute, keep knees together." },
+  { id: "calf_gastroc", label: "Calf stretch (straight knee)", cue: "Hands on wall, back leg straight, heel down, lean forward." },
+  { id: "calf_soleus", label: "Calf stretch (bent knee)", cue: "Same position, back knee slightly bent — feel it lower in the calf." },
+  { id: "lat_side_reach", label: "Lat/side body stretch", cue: "Reach one arm overhead and lean sideways at the hip." },
+  { id: "spinal_twist", label: "Seated spinal twist", cue: "Seated, rotate the torso toward one side, hold the knee for leverage." },
+  { id: "cat_cow", label: "Cat-cow", cue: "On hands and knees, alternate arching and rounding the spine slowly." },
+];
+const DAILY_STRETCH_COUNT = 10;
+const STRETCH_HOLD_SECONDS = 60;
+
 // Goal-based calorie targeting (Mifflin-St Jeor BMR + a sedentary base activity multiplier;
 // workouts and steps add their own bonus on top so more active days earn more calories,
 // similar in spirit to MyFitnessPal's adaptive daily goal).
