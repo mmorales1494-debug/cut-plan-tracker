@@ -2261,6 +2261,7 @@ let timerPhase = null; // null (idle) | "prep" | "work" | "rest" | "restBetweenS
 let timerCurrentSet = 1;
 let timerCurrentRep = 1;
 let timerRemaining = 0;
+let timerPhaseEndAt = 0; // absolute Date.now() target for the current phase — see restTimerEndAt for why
 let timerIntervalId = null;
 let wakeLockSentinel = null;
 let audioCtx = null;
@@ -2310,31 +2311,66 @@ function releaseWakeLock() {
 // ---------- Resistance rest timer ----------
 
 let restTimerRemaining = 0; // seconds left; 0 = inactive
+let restTimerEndAt = 0; // absolute Date.now() target — timers are resynced from this, not tick counts,
+                         // since backgrounding the tab/app pauses setInterval and would otherwise freeze the countdown
 let restTimerIntervalId = null;
 
 let coreStopwatchKey = null; // `${exIdx}-${setIdx}` of the currently running stopwatch, or null
 let coreStopwatchElapsed = 0;
+let coreStopwatchStartedAt = 0;
 let coreStopwatchIntervalId = null;
 
 let workoutTimerIntervalId = null; // ticks the live clock while a resistance/boulder session is in progress
 
 let stretchTimerId = null; // stretch id with its 60s countdown running, or null
+let stretchTimerDay = null; // the day object it was started against
 let stretchTimerRemaining = 0;
+let stretchTimerEndAt = 0;
 let stretchTimerIntervalId = null;
+
+function resyncCoreStopwatch() {
+  if (!coreStopwatchIntervalId) return;
+  coreStopwatchElapsed = Math.round((Date.now() - coreStopwatchStartedAt) / 1000);
+}
+
+function resyncStretchTimer() {
+  if (!stretchTimerIntervalId) return;
+  stretchTimerRemaining = Math.round((stretchTimerEndAt - Date.now()) / 1000);
+  if (stretchTimerRemaining <= 0) {
+    clearInterval(stretchTimerIntervalId);
+    stretchTimerIntervalId = null;
+    stretchTimerRemaining = 0;
+    if (stretchTimerDay && stretchTimerId) stretchTimerDay.stretchesDone[stretchTimerId] = true;
+    stretchTimerId = null;
+    stretchTimerDay = null;
+    beep(880, 150);
+    setTimeout(() => beep(880, 250), 200);
+    saveState();
+  }
+}
+
+function resyncRestTimer() {
+  if (!restTimerIntervalId) return;
+  restTimerRemaining = Math.round((restTimerEndAt - Date.now()) / 1000);
+  if (restTimerRemaining <= 0) {
+    clearInterval(restTimerIntervalId);
+    restTimerIntervalId = null;
+    restTimerRemaining = 0;
+    releaseWakeLock();
+    beep(880, 150);
+    setTimeout(() => beep(880, 250), 200);
+  }
+}
 
 function startRestTimer(seconds) {
   if (!seconds || seconds <= 0) return;
   restTimerRemaining = seconds;
+  restTimerEndAt = Date.now() + seconds * 1000;
   requestWakeLock();
   if (restTimerIntervalId) clearInterval(restTimerIntervalId);
   restTimerIntervalId = setInterval(() => {
-    restTimerRemaining -= 1;
+    resyncRestTimer();
     if (restTimerRemaining <= 0) {
-      clearInterval(restTimerIntervalId);
-      restTimerIntervalId = null;
-      releaseWakeLock();
-      beep(880, 150);
-      setTimeout(() => beep(880, 250), 200);
       // Finished — a real render is needed to remove the banner from the page.
       if (currentTab === "today") render();
     } else {
@@ -2369,6 +2405,7 @@ function startTimer() {
     timerRemaining = PREP_SECONDS;
     beep(880, 150);
   }
+  timerPhaseEndAt = Date.now() + timerRemaining * 1000;
   requestWakeLock();
   if (timerIntervalId) clearInterval(timerIntervalId);
   timerIntervalId = setInterval(tickTimer, 1000);
@@ -2407,13 +2444,9 @@ function finishTimer() {
   if (currentTab === "climbing") render();
 }
 
-function tickTimer() {
-  timerRemaining -= 1;
-  if (timerRemaining > 0) {
-    if (currentTab === "climbing") render();
-    return;
-  }
-
+// Advances exactly one phase transition (prep->work, work->rest, etc). Returns false once
+// finishTimer() has been called (timer is done), true if a new phase is now active.
+function advanceTimerPhase() {
   if (timerPhase === "prep") {
     timerPhase = timerPrepReturn.phase;
     timerRemaining = timerPrepReturn.remaining;
@@ -2430,7 +2463,7 @@ function tickTimer() {
       beep(440, 150);
     } else {
       finishTimer();
-      return;
+      return false;
     }
   } else if (timerPhase === "rest") {
     timerCurrentRep += 1;
@@ -2444,6 +2477,27 @@ function tickTimer() {
     timerRemaining = timerConfig.work;
     beep(880, 150);
   }
+  timerPhaseEndAt += timerRemaining * 1000;
+  return true;
+}
+
+// Catches up timerPhase/timerRemaining to the real elapsed wall-clock time, fast-forwarding
+// through any number of phases that finished while the interval was throttled/suspended
+// (e.g. the app was backgrounded through an entire rest period).
+function advanceTimerToNow() {
+  let guard = 0;
+  while (guard++ < 1000) {
+    const remaining = Math.round((timerPhaseEndAt - Date.now()) / 1000);
+    if (remaining > 0) {
+      timerRemaining = remaining;
+      return;
+    }
+    if (!advanceTimerPhase()) return;
+  }
+}
+
+function tickTimer() {
+  advanceTimerToNow();
   if (currentTab === "climbing") render();
 }
 
@@ -2566,6 +2620,20 @@ document.getElementById("settings-btn").addEventListener("click", () => {
   if (currentTab !== "settings") tabBeforeSettings = currentTab;
   currentTab = "settings";
   render();
+});
+
+// Backgrounding the tab/app pauses setInterval entirely (no ticks fire at all), so any
+// running timer needs an explicit catch-up the moment the app is foregrounded again —
+// otherwise it just looks frozen until the next tick happens to land.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  let needsRender = false;
+  if (restTimerIntervalId) { resyncRestTimer(); needsRender = true; }
+  if (stretchTimerIntervalId) { resyncStretchTimer(); needsRender = true; }
+  if (coreStopwatchIntervalId) { resyncCoreStopwatch(); needsRender = true; }
+  if (timerIntervalId) { advanceTimerToNow(); needsRender = true; }
+  if (workoutTimerIntervalId) needsRender = true;
+  if (needsRender) render();
 });
 
 document.getElementById("view-root").addEventListener("click", e => {
@@ -3033,8 +3101,9 @@ document.getElementById("view-root").addEventListener("click", e => {
     if (coreStopwatchIntervalId) clearInterval(coreStopwatchIntervalId);
     coreStopwatchKey = `${exIdx}-${setIdx}`;
     coreStopwatchElapsed = 0;
+    coreStopwatchStartedAt = Date.now();
     coreStopwatchIntervalId = setInterval(() => {
-      coreStopwatchElapsed += 1;
+      resyncCoreStopwatch();
       const clockEl = document.getElementById(`core-stopwatch-${exIdx}-${setIdx}`);
       if (clockEl) clockEl.textContent = formatMMSS(coreStopwatchElapsed);
     }, 1000);
@@ -3062,17 +3131,13 @@ document.getElementById("view-root").addEventListener("click", e => {
     const id = el.dataset.id;
     if (stretchTimerIntervalId) clearInterval(stretchTimerIntervalId);
     stretchTimerId = id;
+    stretchTimerDay = day;
     stretchTimerRemaining = STRETCH_HOLD_SECONDS;
+    stretchTimerEndAt = Date.now() + STRETCH_HOLD_SECONDS * 1000;
     stretchTimerIntervalId = setInterval(() => {
-      stretchTimerRemaining -= 1;
+      resyncStretchTimer();
       if (stretchTimerRemaining <= 0) {
-        clearInterval(stretchTimerIntervalId);
-        stretchTimerIntervalId = null;
-        stretchTimerId = null;
-        day.stretchesDone[id] = true;
-        beep(880, 150);
-        setTimeout(() => beep(880, 250), 200);
-        saveState(); render();
+        render();
       } else {
         const clockEl = document.getElementById(`stretch-clock-${id}`);
         if (clockEl) clockEl.textContent = `${stretchTimerRemaining}s`;
