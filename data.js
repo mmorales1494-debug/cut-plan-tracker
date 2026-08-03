@@ -44,6 +44,10 @@ const STRETCH_LIBRARY = [
 const DAILY_STRETCH_COUNT = 10;
 const STRETCH_HOLD_SECONDS = 60;
 
+// How much history the weight/waist trend charts show at once — a rolling 30-day block reads
+// clearer than the full all-time history, which flattens out recent movement as it grows.
+const TREND_CHART_WINDOW_DAYS = 30;
+
 // Goal-based calorie targeting (Mifflin-St Jeor BMR + a sedentary base activity multiplier;
 // workouts and steps add their own bonus on top so more active days earn more calories,
 // similar in spirit to MyFitnessPal's adaptive daily goal).

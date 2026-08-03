@@ -1656,6 +1656,7 @@ function renderProgressShell() {
     <div class="card">
       <h2>Waist trend</h2>
       <div class="meal-item-macro" style="margin-bottom:8px;">A steadier read on visible fat loss than the scale — track this if the gut is what you actually care about.</div>
+      <div id="waist-trend-summary" class="meal-item-macro" style="margin-bottom:8px;"></div>
       <div id="waist-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
     </div>
     <div class="card">
@@ -2126,10 +2127,11 @@ function rollingAverageSeries(series, windowSize) {
   return out;
 }
 
-// Actual observed rate of change in lb/week, read off the smoothed (rolling-average) series
-// rather than the goal's target rate — this is "what's really happening," not "what's planned."
-// Looks back 7 days where available, or falls back to the full span if less history exists yet.
-function weightTrendRateLbPerWeek(avgSeries) {
+// Actual observed rate of change per week (whatever unit the series is in — lb, inches, etc.),
+// read off the smoothed (rolling-average) series rather than any target rate — this is "what's
+// really happening," not "what's planned." Looks back 7 days where available, or falls back to
+// the full span if less history exists yet.
+function trendRatePerWeek(avgSeries) {
   if (avgSeries.length < 2) return null;
   const last = avgSeries[avgSeries.length - 1];
   const lastDate = Date.parse(last.x);
@@ -2142,6 +2144,19 @@ function weightTrendRateLbPerWeek(avgSeries) {
   return ((last.y - ref.y) / days) * 7;
 }
 
+// Clips a series (and a matching 7-day rolling average computed over its FULL history, so the
+// average at the window's left edge is still a real trailing average) to the last windowDays
+// ending at the most recent entry. Falls back to the unclipped series if that leaves too little
+// to plot (e.g. all logging happened further back than the window).
+function trailingTrendWindow(series, windowDays) {
+  const avgFull = rollingAverageSeries(series, 7);
+  const cutoff = formatDateKey(new Date(Date.parse(series[series.length - 1].x) - (windowDays - 1) * 86400000));
+  let windowed = series.filter(p => p.x >= cutoff);
+  let avgWindowed = avgFull.filter(p => p.x >= cutoff);
+  if (windowed.length < 2) { windowed = series; avgWindowed = avgFull; }
+  return { windowed, avgWindowed };
+}
+
 function hydrateProgress() {
   const series = weightSeries();
   const slot = document.getElementById("weight-chart-slot");
@@ -2150,24 +2165,33 @@ function hydrateProgress() {
     slot.innerHTML = `<div class="empty-state">Log at least 2 days of weight to see a trend</div>`;
     if (summarySlot) summarySlot.innerHTML = "";
   } else {
-    const avg = rollingAverageSeries(series, 7);
+    const { windowed, avgWindowed } = trailingTrendWindow(series, TREND_CHART_WINDOW_DAYS);
     const goalWeight = state.goal ? state.goal.goalWeight : null;
-    slot.innerHTML = weightChartSVG(series, avg, goalWeight);
-    const current = avg[avg.length - 1].y;
-    const rate = weightTrendRateLbPerWeek(avg);
+    slot.innerHTML = trendChartSVG(windowed, avgWindowed, goalWeight) + renderTrendLegend("Daily weight", goalWeight);
+    const current = avgWindowed[avgWindowed.length - 1].y;
+    const rate = trendRatePerWeek(avgWindowed);
     if (summarySlot) {
       const rateText = rate == null ? "" : ` · ${rate >= 0 ? "+" : ""}${rate.toFixed(1)} lb/wk`;
-      summarySlot.innerHTML = `<strong style="color:var(--text);">${current.toFixed(1)} lb</strong> 7-day avg${rateText}`;
+      summarySlot.innerHTML = `<strong style="color:var(--text);">${current.toFixed(1)} lb</strong> 7-day avg${rateText} · last ${TREND_CHART_WINDOW_DAYS} days`;
     }
   }
 
   const waistSlot = document.getElementById("waist-chart-slot");
+  const waistSummarySlot = document.getElementById("waist-trend-summary");
   if (waistSlot) {
     const wSeries = waistSeries();
     if (wSeries.length < 2) {
       waistSlot.innerHTML = `<div class="empty-state">Log at least 2 days of waist measurement to see a trend</div>`;
+      if (waistSummarySlot) waistSummarySlot.innerHTML = "";
     } else {
-      waistSlot.innerHTML = lineChartSVG([wSeries], ["#4fd1c5"]);
+      const { windowed, avgWindowed } = trailingTrendWindow(wSeries, TREND_CHART_WINDOW_DAYS);
+      waistSlot.innerHTML = trendChartSVG(windowed, avgWindowed, null) + renderTrendLegend("Daily waist", null);
+      const current = avgWindowed[avgWindowed.length - 1].y;
+      const rate = trendRatePerWeek(avgWindowed);
+      if (waistSummarySlot) {
+        const rateText = rate == null ? "" : ` · ${rate >= 0 ? "+" : ""}${rate.toFixed(2)} in/wk`;
+        waistSummarySlot.innerHTML = `<strong style="color:var(--text);">${current.toFixed(1)} in</strong> 7-day avg${rateText} · last ${TREND_CHART_WINDOW_DAYS} days`;
+      }
     }
   }
 
@@ -2232,11 +2256,11 @@ function lineChartSVG(seriesList, colors) {
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${polylines}</svg>`;
 }
 
-// Weight trend gets its own chart (rather than reusing the generic lineChartSVG shared by
-// training volume / waist) because it's the one chart worth annotating: a dashed goal-weight
-// reference line plus labeled start/current points, so it reads as "where am I vs. the plan"
-// at a glance instead of just being an unlabeled shape.
-function weightChartSVG(rawSeries, avgSeries, goalWeight) {
+// Weight and waist trend get their own chart (rather than reusing the generic lineChartSVG
+// used by training volume) because they're worth annotating: an optional dashed goal reference
+// line plus labeled start/current points, so it reads as "where am I vs. the plan" at a glance
+// instead of just being an unlabeled shape. goalWeight is null for waist (no goal tracked there).
+function trendChartSVG(rawSeries, avgSeries, goalWeight) {
   const W = 600, H = 200, PAD_L = 8, PAD_R = 8, PAD_TOP = 22, PAD_BOTTOM = 26;
   const xs = rawSeries.map(p => p.x);
   const allY = rawSeries.map(p => p.y).concat(avgSeries.map(p => p.y));
@@ -2272,6 +2296,16 @@ function weightChartSVG(rawSeries, avgSeries, goalWeight) {
   `;
 
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${goalLine}${rawLine}${avgLine}${startLabel}${currentLabel}</svg>`;
+}
+
+function renderTrendLegend(rawLabel, goalWeight) {
+  return `
+    <div class="chart-legend">
+      <span class="legend-item"><span class="legend-swatch" style="border-color:var(--text-dim);"></span>${rawLabel}</span>
+      <span class="legend-item"><span class="legend-swatch" style="border-color:var(--good);"></span>7-day avg</span>
+      ${goalWeight != null ? `<span class="legend-item"><span class="legend-swatch dashed" style="border-color:var(--warn);"></span>Goal</span>` : ""}
+    </div>
+  `;
 }
 
 // ---------- IndexedDB photo storage ----------
