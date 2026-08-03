@@ -190,6 +190,11 @@ function niceDate(k) {
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
+function shortDate(k) {
+  const d = parseKey(k);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 // ---------- day model ----------
 
 function emptyMealsFromTemplate() {
@@ -1645,6 +1650,7 @@ function renderProgressShell() {
     ${renderGoalCard()}
     <div class="card">
       <h2>Weight trend</h2>
+      <div id="weight-trend-summary" class="meal-item-macro" style="margin-bottom:8px;"></div>
       <div id="weight-chart-slot" class="chart-wrap"><div class="empty-state">Loading…</div></div>
     </div>
     <div class="card">
@@ -2120,14 +2126,39 @@ function rollingAverageSeries(series, windowSize) {
   return out;
 }
 
+// Actual observed rate of change in lb/week, read off the smoothed (rolling-average) series
+// rather than the goal's target rate — this is "what's really happening," not "what's planned."
+// Looks back 7 days where available, or falls back to the full span if less history exists yet.
+function weightTrendRateLbPerWeek(avgSeries) {
+  if (avgSeries.length < 2) return null;
+  const last = avgSeries[avgSeries.length - 1];
+  const lastDate = Date.parse(last.x);
+  let ref = avgSeries[0];
+  for (let i = avgSeries.length - 1; i >= 0; i--) {
+    if ((lastDate - Date.parse(avgSeries[i].x)) / 86400000 >= 7) { ref = avgSeries[i]; break; }
+  }
+  const days = (lastDate - Date.parse(ref.x)) / 86400000;
+  if (days < 1) return null;
+  return ((last.y - ref.y) / days) * 7;
+}
+
 function hydrateProgress() {
   const series = weightSeries();
   const slot = document.getElementById("weight-chart-slot");
+  const summarySlot = document.getElementById("weight-trend-summary");
   if (series.length < 2) {
     slot.innerHTML = `<div class="empty-state">Log at least 2 days of weight to see a trend</div>`;
+    if (summarySlot) summarySlot.innerHTML = "";
   } else {
     const avg = rollingAverageSeries(series, 7);
-    slot.innerHTML = lineChartSVG([series, avg], ["#9aa1af", "#4fd1c5"]);
+    const goalWeight = state.goal ? state.goal.goalWeight : null;
+    slot.innerHTML = weightChartSVG(series, avg, goalWeight);
+    const current = avg[avg.length - 1].y;
+    const rate = weightTrendRateLbPerWeek(avg);
+    if (summarySlot) {
+      const rateText = rate == null ? "" : ` · ${rate >= 0 ? "+" : ""}${rate.toFixed(1)} lb/wk`;
+      summarySlot.innerHTML = `<strong style="color:var(--text);">${current.toFixed(1)} lb</strong> 7-day avg${rateText}`;
+    }
   }
 
   const waistSlot = document.getElementById("waist-chart-slot");
@@ -2199,6 +2230,48 @@ function lineChartSVG(seriesList, colors) {
   }).join("");
 
   return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${polylines}</svg>`;
+}
+
+// Weight trend gets its own chart (rather than reusing the generic lineChartSVG shared by
+// training volume / waist) because it's the one chart worth annotating: a dashed goal-weight
+// reference line plus labeled start/current points, so it reads as "where am I vs. the plan"
+// at a glance instead of just being an unlabeled shape.
+function weightChartSVG(rawSeries, avgSeries, goalWeight) {
+  const W = 600, H = 200, PAD_L = 8, PAD_R = 8, PAD_TOP = 22, PAD_BOTTOM = 26;
+  const xs = rawSeries.map(p => p.x);
+  const allY = rawSeries.map(p => p.y).concat(avgSeries.map(p => p.y));
+  if (goalWeight != null) allY.push(goalWeight);
+  const yMinRaw = Math.min(...allY), yMaxRaw = Math.max(...allY);
+  const yPad = (yMaxRaw - yMinRaw) * 0.12 || 2;
+  const yLo = yMinRaw - yPad, yHi = yMaxRaw + yPad;
+  const yRange = yHi - yLo || 1;
+
+  const xPos = x => PAD_L + (xs.indexOf(x) / Math.max(1, xs.length - 1)) * (W - PAD_L - PAD_R);
+  const yPos = y => H - PAD_BOTTOM - ((y - yLo) / yRange) * (H - PAD_TOP - PAD_BOTTOM);
+
+  const rawLine = `<polyline points="${rawSeries.map(p => `${xPos(p.x)},${yPos(p.y)}`).join(" ")}" fill="none" stroke="var(--text-dim)" stroke-width="1.5" opacity="0.5" />`;
+  const avgLine = `<polyline points="${avgSeries.map(p => `${xPos(p.x)},${yPos(p.y)}`).join(" ")}" fill="none" stroke="var(--good)" stroke-width="2.5" />`;
+
+  const goalLine = goalWeight != null ? `
+    <line x1="${PAD_L}" y1="${yPos(goalWeight)}" x2="${W - PAD_R}" y2="${yPos(goalWeight)}" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="5,4" />
+    <text x="${PAD_L + 4}" y="${yPos(goalWeight) - 6}" font-size="12" fill="var(--warn)">Goal ${goalWeight} lb</text>
+  ` : "";
+
+  const startPoint = rawSeries[0];
+  const currentPoint = avgSeries[avgSeries.length - 1];
+  const currentIsNearTop = yPos(currentPoint.y) < PAD_TOP + 16;
+
+  const startLabel = `
+    <circle cx="${xPos(startPoint.x)}" cy="${yPos(startPoint.y)}" r="3" fill="var(--text-dim)" />
+    <text x="${xPos(startPoint.x)}" y="${H - 8}" text-anchor="start" font-size="11" fill="var(--text-dim)">${shortDate(startPoint.x)}</text>
+  `;
+
+  const currentLabel = `
+    <circle cx="${xPos(currentPoint.x)}" cy="${yPos(currentPoint.y)}" r="3.5" fill="var(--good)" />
+    <text x="${xPos(currentPoint.x) - 6}" y="${yPos(currentPoint.y) + (currentIsNearTop ? 16 : -8)}" text-anchor="end" font-size="13" font-weight="600" fill="var(--text)">${currentPoint.y.toFixed(1)}</text>
+  `;
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${goalLine}${rawLine}${avgLine}${startLabel}${currentLabel}</svg>`;
 }
 
 // ---------- IndexedDB photo storage ----------
