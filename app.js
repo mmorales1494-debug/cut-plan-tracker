@@ -2281,21 +2281,30 @@ function trendChartSVG(rawSeries, avgSeries, goalWeight) {
     <text x="${PAD_L + 4}" y="${yPos(goalWeight) - 6}" font-size="12" fill="var(--warn)">Goal ${goalWeight} lb</text>
   ` : "";
 
-  const startPoint = rawSeries[0];
   const currentPoint = avgSeries[avgSeries.length - 1];
   const currentIsNearTop = yPos(currentPoint.y) < PAD_TOP + 16;
 
-  const startLabel = `
-    <circle cx="${xPos(startPoint.x)}" cy="${yPos(startPoint.y)}" r="3" fill="var(--text-dim)" />
-    <text x="${xPos(startPoint.x)}" y="${H - 8}" text-anchor="start" font-size="11" fill="var(--text-dim)">${shortDate(startPoint.x)}</text>
-  `;
+  // Date axis: a handful of evenly-spaced ticks (not just the endpoints) so any point along
+  // the line can be tied back to roughly which day it is, not just "somewhere in the window."
+  const tickCount = Math.min(5, xs.length);
+  const tickIndices = [...new Set(Array.from({ length: tickCount }, (_, i) =>
+    Math.round(i * (xs.length - 1) / Math.max(1, tickCount - 1))))];
+  const dateAxis = tickIndices.map((i, idx) => {
+    const x = xPos(xs[i]);
+    const anchor = idx === 0 ? "start" : idx === tickIndices.length - 1 ? "end" : "middle";
+    return `
+      <line x1="${x}" y1="${PAD_TOP}" x2="${x}" y2="${H - PAD_BOTTOM}" stroke="var(--border)" stroke-width="1" />
+      <line x1="${x}" y1="${H - PAD_BOTTOM}" x2="${x}" y2="${H - PAD_BOTTOM + 4}" stroke="var(--text-dim)" stroke-width="1" />
+      <text x="${x}" y="${H - 8}" text-anchor="${anchor}" font-size="10.5" fill="var(--text-dim)">${shortDate(xs[i])}</text>
+    `;
+  }).join("");
 
   const currentLabel = `
     <circle cx="${xPos(currentPoint.x)}" cy="${yPos(currentPoint.y)}" r="3.5" fill="var(--good)" />
     <text x="${xPos(currentPoint.x) - 6}" y="${yPos(currentPoint.y) + (currentIsNearTop ? 16 : -8)}" text-anchor="end" font-size="13" font-weight="600" fill="var(--text)">${currentPoint.y.toFixed(1)}</text>
   `;
 
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${goalLine}${rawLine}${avgLine}${startLabel}${currentLabel}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${dateAxis}${goalLine}${rawLine}${avgLine}${currentLabel}</svg>`;
 }
 
 function renderTrendLegend(rawLabel, goalWeight) {
