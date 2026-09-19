@@ -115,6 +115,61 @@ function plateBreakdown(totalWeight, unit) {
   return { plates, bar };
 }
 
+// ---------- StrongLifts 5x5 ----------
+
+// A routine tagged with this program runs the real linear-progression protocol instead of
+// the app's default "pick a rep range and autoregulate" behavior: fixed sets x reps per
+// lift, a working weight the app prescribes from the logged history, and an automatic
+// deload once a lift stalls three sessions in a row.
+const STRONGLIFTS_PROGRAM = "stronglifts";
+
+// There are only TWO workout templates — A and B — trained THREE times a week, alternating:
+// A/B/A one week, B/A/B the next. Three sessions, not three workouts.
+const STRONGLIFTS_SESSIONS_PER_WEEK = 3;
+const STRONGLIFTS_SCHEDULE_DAYS = [1, 3, 5]; // Mon/Wed/Fri — the canonical split
+
+// Smallest jump a standard plate set can make (a pair of the smallest plates), so every
+// weight the program prescribes is one you can actually load.
+const STRONGLIFTS_ROUND_STEP = { lb: 5, kg: 2.5 };
+
+const STRONGLIFTS_FAILS_BEFORE_DELOAD = 3;
+const STRONGLIFTS_DELOAD_FACTOR = 0.9; // cut 10% and climb back with better form/bar speed
+
+// Rest between work sets scales with how the last set went. The program calls for 90s when
+// a set moves cleanly, 3 min when it grinds, 5 min after missed reps — reps short of target
+// is the only signal the app has for "that one was hard," so it stands in for the grind.
+const STRONGLIFTS_REST = { clean: 90, grind: 180, missed: 300 };
+
+// Warm-up ramp: two empty-bar sets, then 5/3/2 reps climbing toward the working weight.
+// Warm-ups are deliberately NOT logged as sets — only work sets drive progression.
+const STRONGLIFTS_WARMUP_RAMP = [
+  { pct: 0, reps: 5 },
+  { pct: 0, reps: 5 },
+  { pct: 0.5, reps: 5 },
+  { pct: 0.7, reps: 3 },
+  { pct: 0.9, reps: 2 },
+];
+
+// scheme = work sets x reps (deadlift is 1x5 — five hard pulls from a dead stop is already
+// the whole stimulus, and 5x5 deadlifts wreck recovery for the squats three days later).
+// increment = weight added after a session where every work set hit its reps; deadlift
+// climbs twice as fast since it starts heavier and recovers faster.
+// start = where the program says to begin a lift with no history yet.
+// fromFloor skips the empty-bar warm-up sets — a loaded bar on the floor is already at
+// pulling height, an empty one isn't.
+const STRONGLIFTS_TEMPLATE = {
+  A: [
+    { name: "Squat", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
+    { name: "Bench Press", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
+    { name: "Barbell Row", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 65, kg: 30 } },
+  ],
+  B: [
+    { name: "Squat", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
+    { name: "Overhead Press", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
+    { name: "Deadlift", barbell: true, scheme: { sets: 1, reps: 5 }, increment: { lb: 10, kg: 5 }, start: { lb: 95, kg: 40 }, fromFloor: true },
+  ],
+};
+
 // Core work targets — spec just says "10-15 min, progressive," so these are reasonable
 // bodyweight/ab-work defaults: higher rep range than resistance work, same set count.
 const CORE_REP_TARGET = { min: 12, max: 20 };
