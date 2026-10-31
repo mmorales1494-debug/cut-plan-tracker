@@ -57,7 +57,7 @@ S.days["2026-05-01"] = { workout: { type: "resistance", routineId: S.routines[0]
 day.workout.exercises[0].sets = [];
 ctx.slFillPrescribedSets(day, "2026-05-08");
 const mid = check("workout body — mid-program squat", () => ctx.renderWorkoutBody(day));
-console.log(/Warm-up \(not logged\)/.test(mid) ? "  ✓ warm-up ramp shown" : "  ✗ ramp missing");
+console.log(/data-action="slToggleWarmup"/.test(mid) ? "  ✓ warm-up ramp shown" : "  ✗ ramp missing");
 console.log(/Today: 5×5 @ 230 lb, up 5 lb/.test(mid) ? "  ✓ prescribes 230 lb" : "  ✗ wrong prescription");
 
 check("program card", () => ctx.renderStrongLiftsProgramCard());

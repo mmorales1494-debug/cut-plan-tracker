@@ -96,6 +96,7 @@ function loadState() {
         parsed.slLayoutVersion = 2;
       }
       if (parsed.slShortSessions === undefined) parsed.slShortSessions = true;
+      if (!parsed.restTimes) parsed.restTimes = { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS };
       if (parsed.liftingOnly === undefined) parsed.liftingOnly = false;
       if (!parsed.platePairs) parsed.platePairs = JSON.parse(JSON.stringify(DEFAULT_PLATE_PAIRS));
       // one-time addition: rotator cuff work wasn't in any routine before — add it if missing
@@ -190,6 +191,7 @@ function loadState() {
     nextRoutineIndex: 0,
     slLayoutVersion: 2,
     slShortSessions: true,
+    restTimes: { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS },
     liftingOnly: false,
     platePairs: JSON.parse(JSON.stringify(DEFAULT_PLATE_PAIRS)),
     customPresets: [],
@@ -1192,11 +1194,21 @@ function slWarmupSets(workingKg, cfg) {
   return rows;
 }
 
+function restTimes() {
+  return { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS, ...(state.restTimes || {}) };
+}
+
+// "3 min", "4.5 min", "60s" — rest lengths as you'd say them.
+function formatRest(sec) {
+  return sec >= 120 ? `${Math.round(sec / 30) / 2} min` : `${sec}s`;
+}
+
 function slRestSeconds(reps, targetReps) {
   const r = Number(reps) || 0;
-  if (r >= targetReps) return STRONGLIFTS_REST.clean;
-  if (r >= targetReps - 1) return STRONGLIFTS_REST.grind;
-  return STRONGLIFTS_REST.missed;
+  const rest = restTimes();
+  if (r >= targetReps) return rest.clean;
+  if (r >= targetReps - 1) return rest.grind;
+  return rest.missed;
 }
 
 function slWeight(kg) {
@@ -1546,7 +1558,7 @@ function renderStrongLiftsExerciseBlock(ex, exIdx, cfg, workout) {
         <input type="number" inputmode="decimal" step="${slRoundStep()}" data-action="slSetWorkWeight" data-ex="${exIdx}" value="${toDisplayWeight(workWeightKg)}">
       </div>
       <div data-sl-plate-for="${exIdx}">${renderPlateCalc(workWeightKg)}</div>
-      ${warmup.length ? `<div class="warmup-list"><div class="meal-item-macro">Warm-up (not logged) — plates per side:</div>${warmup.map(r => `<div class="warmup-row"><span>${r.weight} × ${r.reps}</span><span class="plate-calc-label">${plateSummary(r.weight)}</span></div>`).join("")}</div>` : ""}
+      ${warmup.length ? `<div class="warmup-list"><div class="meal-item-macro">Warm-up — check each off to start a ${formatRest(restTimes().warmup)} rest (not logged as sets). Plates per side:</div>${warmup.map((r, wIdx) => `<label class="warmup-row ${(ex.warmupDone || [])[wIdx] ? "done" : ""}"><input type="checkbox" data-action="slToggleWarmup" data-ex="${exIdx}" data-idx="${wIdx}" ${(ex.warmupDone || [])[wIdx] ? "checked" : ""}><span class="warmup-load">${r.weight} × ${r.reps}</span><span class="plate-calc-label">${plateSummary(r.weight)}</span></label>`).join("")}</div>` : ""}
       ${ex.sets.length ? ex.sets.map((s, sIdx) => {
         const reps = Number(s.reps) || 0;
         const hit = reps >= scheme.reps;
@@ -1949,7 +1961,7 @@ function renderRoutineManager() {
         </div>
         <div class="field" style="margin-top:10px;"><label>Routine name</label><input type="text" data-action="setRoutineField" data-routine="${routine.id}" data-field="name" value="${routine.name}"></div>
         ${isStrongLifts(routine) ? `
-          <div class="meal-item-macro" style="margin-bottom:10px;">Sets, reps and the jump per session are set per lift below. Rest is automatic: ${STRONGLIFTS_REST.clean}s after a clean set, ${STRONGLIFTS_REST.grind}s one rep short, ${STRONGLIFTS_REST.missed}s after a miss.</div>
+          <div class="meal-item-macro" style="margin-bottom:10px;">Sets, reps and the jump per session are set per lift below. Rest is automatic: ${formatRest(restTimes().clean)} after a clean set, ${formatRest(restTimes().grind)} one rep short, ${formatRest(restTimes().missed)} after a miss (change these in Settings → Lifting).</div>
         ` : `
         <div class="two-col">
           <div class="field"><label>Sets (min)</label><input type="number" inputmode="numeric" data-action="setRoutineField" data-routine="${routine.id}" data-field="setMin" value="${routine.setTarget.min}"></div>
@@ -2320,6 +2332,15 @@ function renderSettings() {
       </label>
       <div class="meal-item-macro" style="margin-bottom:10px;">Sets the recurring weekly pattern going forward. Days you've already logged won't change.</div>
       ${renderScheduleEditor()}
+    </div>
+    <div class="card">
+      <h2>Lifting</h2>
+      <div class="meal-item-macro" style="margin-bottom:10px;">Rest timer after each StrongLifts work set, in minutes — it picks one based on how the set went. Heavy sets near your limit do best with 3–5 min. Pull-ups and curls always get ${formatRest(ACCESSORY_REST_SECONDS)}.</div>
+      <div class="two-col">
+        ${[["clean", "All reps"], ["grind", "One rep short"], ["missed", "Missed reps"], ["warmup", "After a warm-up set"]].map(([kind, label]) => `
+          <div class="field"><label>${label}</label><input type="number" inputmode="decimal" min="0.5" step="0.5" data-action="setRestTime" data-kind="${kind}" value="${restTimes()[kind] / 60}"></div>
+        `).join("")}
+      </div>
     </div>
     <div class="card">
       <h2>Plates</h2>
@@ -3696,7 +3717,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     const wasDone = Number(set.reps) > 0;
     set.reps = wasDone ? "" : target;
     saveState();
-    if (!wasDone) startRestTimer(STRONGLIFTS_REST.clean);
+    if (!wasDone) startRestTimer(ACCESSORY_REST_SECONDS);
     render(); return;
   }
   if (action === "slLoadPrescribed") {
@@ -4198,14 +4219,33 @@ document.getElementById("view-root").addEventListener("change", e => {
     const routine = routineForDay(day);
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     const slCfg = ex && !ex.quickAdd ? strongLiftsConfig(routine, ex.name) : null;
+    const accCfg = ex && !ex.quickAdd ? slAccessoryConfig(routine, ex.name) : null;
     startRestTimer(slCfg
       ? slRestSeconds(el.value, slScheme(slCfg).reps)
+      : accCfg ? ACCESSORY_REST_SECONDS
       : (routine.restSeconds || DEFAULT_REST_SECONDS));
     return;
   }
   if (action === "setCoreField" && (el.dataset.field === "reps" || el.dataset.field === "seconds") && el.value !== "") {
     startRestTimer(CORE_REST_SECONDS);
     return;
+  }
+  // Warm-ups are checked off, not logged: ticking one starts the warm-up rest, unticking a
+  // mis-tap just clears it. Pins the day so a routine re-sync can't wipe the ticks.
+  if (action === "slToggleWarmup") {
+    const ex = day.workout.exercises[Number(el.dataset.ex)];
+    if (!ex.warmupDone) ex.warmupDone = [];
+    ex.warmupDone[Number(el.dataset.idx)] = el.checked;
+    day.workout.routinePinned = true;
+    saveState();
+    if (el.checked) startRestTimer(restTimes().warmup);
+    render(); return;
+  }
+  if (action === "setRestTime") {
+    const minutes = Number(el.value);
+    if (!(minutes > 0)) return;
+    state.restTimes = { ...restTimes(), [el.dataset.kind]: Math.round(minutes * 60) };
+    saveState(); return;
   }
   if (action === "slToggleShortSessions") {
     state.slShortSessions = el.checked;

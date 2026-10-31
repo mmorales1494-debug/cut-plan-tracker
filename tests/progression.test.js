@@ -115,9 +115,13 @@ eq(ctx.slWarmupSets(ctx.toStorageWeight(315), dl).map(r => `${r.weight}x${r.reps
    ["160x5", "220x3", "285x2"], "deadlift ramp skips the empty-bar sets");
 
 // ---- rest length follows the set ----
-eq(ctx.slRestSeconds(5, 5), 90, "clean set -> 90s");
-eq(ctx.slRestSeconds(4, 5), 180, "one short -> 3 min");
+eq(ctx.slRestSeconds(5, 5), 180, "clean set -> 3 min");
+eq(ctx.slRestSeconds(4, 5), 240, "one short -> 4 min");
 eq(ctx.slRestSeconds(2, 5), 300, "missed -> 5 min");
+S.restTimes = { clean: 270, grind: 300, missed: 330, warmup: 45 };
+eq(ctx.slRestSeconds(5, 5), 270, "rest follows Settings");
+eq(ctx.restTimes().warmup, 45, "warm-up rest follows Settings");
+delete S.restTimes;
 
 // ---- prefill lays out the work sets ----
 const day = { workout: { type: "resistance", routineId: A.id, exercises: [
@@ -164,7 +168,8 @@ eq(migrated.routines.map(r => r.program), ["stronglifts", "stronglifts"], "legac
 eq(migrated.routines[1].exercises[2].scheme, { sets: 1, reps: 5 }, "legacy 5x5 deadlift becomes 1x5");
 eq(migrated.routines[0].exercises.some(e => e.name === "Band External Rotation"), false,
    "accessory auto-add leaves StrongLifts routines alone");
-eq(migrated.routines[0].restSeconds, 90, "rest defaults to the program's 90s");
+eq(migrated.routines[0].restSeconds, 180, "rest defaults to the program's clean-set rest");
+eq(migrated.restTimes, { clean: 180, grind: 240, missed: 300, warmup: 60 }, "rest times added on load");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

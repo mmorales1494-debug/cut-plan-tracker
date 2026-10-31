@@ -161,10 +161,15 @@ const STRONGLIFTS_FAILS_BEFORE_DELOAD = 3;
 const WORKOUT_TIMER_SANITY_MINUTES = 120;
 const STRONGLIFTS_DELOAD_FACTOR = 0.9; // cut 10% and climb back with better form/bar speed
 
-// Rest between work sets scales with how the last set went. The program calls for 90s when
-// a set moves cleanly, 3 min when it grinds, 5 min after missed reps — reps short of target
-// is the only signal the app has for "that one was hard," so it stands in for the grind.
-const STRONGLIFTS_REST = { clean: 90, grind: 180, missed: 300 };
+// Default rest between work sets, scaled by how the last set went — reps short of target is
+// the only signal the app has for "that one was hard." The StrongLifts app's 90s-when-easy
+// rule only fits the light early weeks; heavy 5-rep compound sets near your limit get more
+// reps and more strength from 3-5 min (Schoenfeld et al. 2016 and similar). All three, plus
+// the warm-up rest, are editable in Settings -> Lifting.
+const STRONGLIFTS_REST = { clean: 180, grind: 240, missed: 300 };
+const WARMUP_REST_SECONDS = 60;
+// Pull-ups, curls, the light bench — not near-max work, so a short rest is plenty.
+const ACCESSORY_REST_SECONDS = 90;
 
 // Warm-up ramp: two empty-bar sets, then 5/3/2 reps climbing toward the working weight.
 // Warm-ups are deliberately NOT logged as sets — only work sets drive progression.

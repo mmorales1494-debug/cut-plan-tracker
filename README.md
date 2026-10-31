@@ -54,10 +54,12 @@ What the app does for you once it's running:
   deadlift goes up 10 lb (5 kg). Miss a rep and the weight repeats.
 - **Deloads automatically.** Three sessions stalled at the same weight and it cuts 10%,
   rounded down to something the plates can actually make, so you climb back through it.
-- **Times the rest.** 90 seconds after a clean set, 3 minutes when you come up a rep short,
-  5 minutes after a real miss.
-- **Warms you up.** Two empty-bar sets then 5/3/2 ramping to the working weight, shown but
-  not logged — only work sets count toward progression.
+- **Times the rest.** 3 minutes after a clean set, 4 when you come up a rep short, 5 after a
+  real miss — heavy 5-rep sets near your limit do best with 3–5 min. All editable in
+  **Settings → Lifting**. Pull-ups and curls get 90 seconds.
+- **Warms you up.** Two empty-bar sets then 5/3/2 ramping to the working weight, with plates
+  per side. Check each one off to start a 1-minute warm-up rest; they aren't logged as sets —
+  only work sets count toward progression.
 
 Progression is re-derived from your logged sets every time, not stored as a counter, so
 fixing a mistyped session (or restoring a backup) recomputes the right next weight instead
