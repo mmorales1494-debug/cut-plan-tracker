@@ -2341,6 +2341,16 @@ function renderSettings() {
           <div class="field"><label>${label}</label><input type="number" inputmode="decimal" min="0.5" step="0.5" data-action="setRestTime" data-kind="${kind}" value="${restTimes()[kind] / 60}"></div>
         `).join("")}
       </div>
+      <label class="check-row">
+        <input type="checkbox" data-action="toggleRestAlarmSound" ${state.restAlarmSound !== false ? "checked" : ""}>
+        <span><strong>Alarm sound when rest ends</strong> — repeats until you tap the screen (up to ${REST_ALARM_MAX_SECONDS}s), with a beep ${REST_WARNING_SECONDS}s before. The screen flashes either way.</span>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" data-action="toggleRestAlarmIgnoreSilent" ${state.restAlarmIgnoreSilent ? "checked" : ""}>
+        <span><strong>Sound it even when the phone is on silent</strong> — pauses any music that's playing while the alarm goes off.</span>
+      </label>
+      <button class="btn secondary" data-action="testRestAlarm" style="width:100%; margin-top:10px;">Test the alarm</button>
+      <div class="meal-item-macro" style="margin-top:8px;">Keep Ledge open during rest — the screen stays on. iPhone pauses web apps that are in the background or locked, so the alarm goes off when you come back to it.</div>
     </div>
     <div class="card">
       <h2>Plates</h2>
@@ -3065,15 +3075,27 @@ function computeTotalSeconds(cfg) {
   return cfg.sets * perSet + Math.max(0, cfg.sets - 1) * cfg.restBetweenSets;
 }
 
-function beep(freq, duration) {
+// iOS only lets a page make sound from an AudioContext that was created or resumed inside a
+// tap. The rest alarm fires from a timer, not a tap, so the context is created (and kept
+// awake) on every tap instead — by the time the alarm goes off it's already allowed to play.
+function unlockAudio() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { /* Web Audio unavailable */ }
+}
+
+function beep(freq, duration, volume = 0.25, wave = "sine") {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
+    osc.type = wave;
     osc.frequency.value = freq;
     osc.connect(gain);
     gain.connect(audioCtx.destination);
-    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration / 1000);
     osc.start();
     osc.stop(audioCtx.currentTime + duration / 1000);
@@ -3134,21 +3156,80 @@ function resyncStretchTimer() {
   }
 }
 
+// ---------- rest alarm ----------
+
+let restAlarmIntervalId = null;
+let restAlarmNoteTimeouts = [];
+let restAlarmStopSoundAt = 0;
+let restWarned = false;
+
+// Safari's audio session: "playback" is the only type that sounds with the ring/silent switch
+// on, but it also pauses whatever music is playing — so it's opt-in (Settings -> Lifting), and
+// only switched on for the alarm itself.
+function setAudioSession(type) {
+  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) { /* unsupported */ }
+}
+
+function alarmBurst() {
+  if (state.restAlarmSound === false) return;
+  beep(988, 160, 0.7, "square");
+  restAlarmNoteTimeouts = [
+    setTimeout(() => beep(1319, 160, 0.7, "square"), 200),
+    setTimeout(() => beep(1568, 320, 0.7, "square"), 400),
+  ];
+  try { if (navigator.vibrate) navigator.vibrate([250, 120, 250]); } catch (e) { /* iOS has none */ }
+}
+
+function startRestAlarm() {
+  stopRestAlarm();
+  if (state.restAlarmIgnoreSilent) setAudioSession("playback");
+  requestWakeLock(); // keep the screen on until it's dismissed, so the flash is seen
+  restAlarmStopSoundAt = Date.now() + REST_ALARM_MAX_SECONDS * 1000;
+  alarmBurst();
+  restAlarmIntervalId = setInterval(() => {
+    if (Date.now() < restAlarmStopSoundAt) alarmBurst();
+    else { clearInterval(restAlarmIntervalId); restAlarmIntervalId = null; setAudioSession("auto"); }
+  }, REST_ALARM_REPEAT_MS);
+  const overlay = document.createElement("div");
+  overlay.id = "rest-alarm";
+  overlay.className = "rest-alarm";
+  overlay.innerHTML = `<div class="rest-alarm-title">Rest's over</div><div class="rest-alarm-sub">Next set — tap anywhere</div>`;
+  overlay.addEventListener("click", () => { stopRestAlarm(); releaseWakeLock(); });
+  document.body.appendChild(overlay);
+}
+
+function stopRestAlarm() {
+  if (restAlarmIntervalId) { clearInterval(restAlarmIntervalId); restAlarmIntervalId = null; }
+  restAlarmNoteTimeouts.forEach(clearTimeout); // a dismissal mid-burst cuts the trailing notes too
+  restAlarmNoteTimeouts = [];
+  const overlay = document.getElementById("rest-alarm");
+  if (overlay) overlay.remove();
+  setAudioSession("auto");
+}
+
 function resyncRestTimer() {
   if (!restTimerIntervalId) return;
   restTimerRemaining = Math.round((restTimerEndAt - Date.now()) / 1000);
+  if (!restWarned && restTimerRemaining > 0 && restTimerRemaining <= REST_WARNING_SECONDS) {
+    restWarned = true;
+    if (state.restAlarmSound !== false) beep(660, 150, 0.4);
+  }
   if (restTimerRemaining <= 0) {
     clearInterval(restTimerIntervalId);
     restTimerIntervalId = null;
+    // Only alarm if it ran out recently — coming back to the app 20 minutes later shouldn't
+    // blast an alarm for a rest that ended long ago.
+    const overdueSeconds = -restTimerRemaining;
     restTimerRemaining = 0;
-    releaseWakeLock();
-    beep(880, 150);
-    setTimeout(() => beep(880, 250), 200);
+    if (overdueSeconds <= REST_ALARM_MAX_SECONDS) startRestAlarm();
+    else releaseWakeLock();
   }
 }
 
 function startRestTimer(seconds) {
   if (!seconds || seconds <= 0) return;
+  stopRestAlarm(); // logging the next set is the dismissal
+  restWarned = seconds <= REST_WARNING_SECONDS;
   restTimerRemaining = seconds;
   restTimerEndAt = Date.now() + seconds * 1000;
   requestWakeLock();
@@ -3170,6 +3251,7 @@ function startRestTimer(seconds) {
 
 function skipRestTimer() {
   if (restTimerIntervalId) { clearInterval(restTimerIntervalId); restTimerIntervalId = null; }
+  stopRestAlarm();
   releaseWakeLock();
   restTimerRemaining = 0;
   if (currentTab === "today") render();
@@ -3421,12 +3503,17 @@ document.addEventListener("visibilitychange", () => {
   if (needsRender) render();
 });
 
+// Any tap anywhere keeps the audio context unlocked for the rest alarm (see unlockAudio).
+document.addEventListener("click", unlockAudio, true);
+document.addEventListener("touchend", unlockAudio, true);
+
 document.getElementById("view-root").addEventListener("click", e => {
   const el = e.target.closest("[data-action]");
   if (!el) return;
   const action = el.dataset.action;
   const day = getOrCreateDay(viewDate);
 
+  if (action === "testRestAlarm") { startRestAlarm(); return; }
   if (action === "backFromSettings") {
     currentTab = tabBeforeSettings;
     render(); return;
@@ -4247,6 +4334,8 @@ document.getElementById("view-root").addEventListener("change", e => {
     state.restTimes = { ...restTimes(), [el.dataset.kind]: Math.round(minutes * 60) };
     saveState(); return;
   }
+  if (action === "toggleRestAlarmSound") { state.restAlarmSound = el.checked; saveState(); return; }
+  if (action === "toggleRestAlarmIgnoreSilent") { state.restAlarmIgnoreSilent = el.checked; saveState(); return; }
   if (action === "slToggleShortSessions") {
     state.slShortSessions = el.checked;
     saveState(); render(); return; // render's resync re-lays today if nothing's logged yet

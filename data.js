@@ -171,6 +171,13 @@ const WARMUP_REST_SECONDS = 60;
 // Pull-ups, curls, the light bench — not near-max work, so a short rest is plenty.
 const ACCESSORY_REST_SECONDS = 90;
 
+// When a rest timer runs out: a loud three-note alarm that repeats every couple of seconds until
+// dismissed (giving up after REST_ALARM_MAX_SECONDS so a phone left on the bench goes quiet),
+// plus a full-screen flash. A single soft beep REST_WARNING_SECONDS before the end says "get set."
+const REST_ALARM_REPEAT_MS = 2000;
+const REST_ALARM_MAX_SECONDS = 30;
+const REST_WARNING_SECONDS = 10;
+
 // Warm-up ramp: two empty-bar sets, then 5/3/2 reps climbing toward the working weight.
 // Warm-ups are deliberately NOT logged as sets — only work sets drive progression.
 const STRONGLIFTS_WARMUP_RAMP = [

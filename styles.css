@@ -788,3 +788,38 @@ table.hist-table th { color: var(--text); font-weight: 600; }
   color: #0b1210;
   font-weight: 600;
 }
+
+/* Rest's-over alarm: full-screen, impossible to miss from across the rack. */
+.rest-alarm {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  background: var(--accent);
+  color: #0b1412;
+  text-align: center;
+  animation: rest-alarm-flash 0.6s steps(1, end) infinite;
+  cursor: pointer;
+}
+.rest-alarm-title { font-size: 44px; font-weight: 800; letter-spacing: -0.5px; }
+.rest-alarm-sub { font-size: 17px; font-weight: 600; }
+@keyframes rest-alarm-flash {
+  50% { background: var(--bad); color: #fff; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rest-alarm { animation: none; }
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
