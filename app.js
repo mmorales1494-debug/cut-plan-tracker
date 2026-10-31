@@ -36,6 +36,7 @@ function strongLiftsRoutine(letter) {
     id: "routine_sl_" + letter.toLowerCase() + "_" + Date.now(),
     name: "StrongLifts " + letter,
     program: STRONGLIFTS_PROGRAM,
+    slLetter: letter,
     active: true,
     exercises: JSON.parse(JSON.stringify(STRONGLIFTS_TEMPLATE[letter])),
     setTarget: { min: 5, max: 5 },
@@ -72,9 +73,31 @@ function loadState() {
         const template = JSON.parse(JSON.stringify(STRONGLIFTS_TEMPLATE[letter]));
         const extras = r.exercises.filter(e => !template.some(t => t.name === e.name));
         r.program = STRONGLIFTS_PROGRAM;
+        r.slLetter = letter;
         r.restSeconds = STRONGLIFTS_REST.clean;
         r.exercises = template.concat(extras);
       });
+      // Layout v2 added pull-ups, curls and an optional light bench to the A/B templates.
+      // Rebuild each program routine in template order, keeping any lift you already had
+      // (and its edited sets/reps/increment) and anything extra you added at the end.
+      if ((parsed.slLayoutVersion || 1) < 2) {
+        parsed.routines.forEach(r => {
+          if (r.program !== STRONGLIFTS_PROGRAM) return;
+          const letter = r.slLetter || (r.exercises.some(e => e.name === "Overhead Press" || e.name === "Deadlift") ? "B" : "A");
+          r.slLetter = letter;
+          const template = JSON.parse(JSON.stringify(STRONGLIFTS_TEMPLATE[letter]));
+          const kept = template.map(t => {
+            const mine = r.exercises.find(e => e.name === t.name);
+            return mine ? Object.assign(t, mine) : t;
+          });
+          const extras = r.exercises.filter(e => !template.some(t => t.name === e.name));
+          r.exercises = kept.concat(extras);
+        });
+        parsed.slLayoutVersion = 2;
+      }
+      if (parsed.slShortSessions === undefined) parsed.slShortSessions = true;
+      if (parsed.liftingOnly === undefined) parsed.liftingOnly = false;
+      if (!parsed.platePairs) parsed.platePairs = JSON.parse(JSON.stringify(DEFAULT_PLATE_PAIRS));
       // one-time addition: rotator cuff work wasn't in any routine before — add it if missing
       // (still just a normal exercise afterward, remove it in Workout Routines if not wanted).
       // StrongLifts routines are left alone — the program is the five lifts, nothing else.
@@ -165,6 +188,10 @@ function loadState() {
     weightUnit: "kg",
     routines: [defaultRoutine()],
     nextRoutineIndex: 0,
+    slLayoutVersion: 2,
+    slShortSessions: true,
+    liftingOnly: false,
+    platePairs: JSON.parse(JSON.stringify(DEFAULT_PLATE_PAIRS)),
     customPresets: [],
     goal: null,
     itemUsage: {},
@@ -244,17 +271,62 @@ function routineForDay(day) {
     { name: "", setTarget: SET_TARGET, repTarget: REP_TARGET, weightStepKg: WEIGHT_STEP_KG };
 }
 
-function populateResistanceExercises(day, dateKey) {
+function routinePool() {
   const active = state.routines.filter(r => r.active);
-  const pool = active.length ? active : state.routines;
-  const idx = state.nextRoutineIndex % pool.length;
-  const routine = pool[idx];
-  day.workout.exercises = routine.exercises.map(ex => ({ name: ex.name, barbell: !!ex.barbell, sets: [] }));
+  return active.length ? active : state.routines;
+}
+
+// A set only counts once it has reps in it. Rows the app pre-fills (a prescribed weight, last
+// time's curls) sit there with blank reps until you actually do them.
+function loggedSets(ex) {
+  return (ex.sets || []).filter(s => Number(s.reps) > 0);
+}
+
+function dayHasLoggedSets(day) {
+  return day.workout.exercises.some(ex => loggedSets(ex).length > 0);
+}
+
+// The rotation follows the sessions you actually trained, not the days the app happened to
+// lay out: the routine after the one on your most recent logged lifting day. A scheduled day
+// you skipped therefore doesn't advance A/B. The stored index is only the fallback for when
+// nothing in the pool has been logged yet.
+function nextRoutineFor(dateKey, pool) {
+  pool = pool || routinePool();
+  if (!pool.length) return null;
+  const keys = Object.keys(state.days).filter(k => !dateKey || k < dateKey).sort();
+  for (let i = keys.length - 1; i >= 0; i--) {
+    const d = state.days[keys[i]];
+    if (!d.workout || d.workout.type !== "resistance" || !dayHasLoggedSets(d)) continue;
+    const idx = pool.findIndex(r => r.id === d.workout.routineId);
+    if (idx !== -1) return pool[(idx + 1) % pool.length];
+  }
+  return pool[state.nextRoutineIndex % pool.length];
+}
+
+// Which of a routine's exercises go on the day — "short sessions" leaves rows and deadlifts
+// (and band work) off A/B days without removing them from the routine.
+function routineExercisesForDay(routine) {
+  if (!isStrongLifts(routine) || !state.slShortSessions) return routine.exercises;
+  return routine.exercises.filter(ex => !STRONGLIFTS_SHORT_SKIP.includes(ex.name));
+}
+
+function setDayRoutine(day, routine, dateKey) {
+  day.workout.exercises = routineExercisesForDay(routine).map(ex => ({ name: ex.name, barbell: !!ex.barbell, sets: [] }));
   day.workout.routineId = routine.id;
-  state.nextRoutineIndex = (idx + 1) % pool.length;
   // A StrongLifts session opens with its work sets already laid out at the weight the
-  // program prescribes, so the only thing left to enter is the reps you actually got.
-  if (dateKey) slFillPrescribedSets(day, dateKey);
+  // program prescribes, and its accessories at what you did last time, so the only thing
+  // left to enter is the reps you actually got.
+  if (dateKey) {
+    slFillPrescribedSets(day, dateKey);
+    slFillAccessorySets(day, dateKey);
+  }
+}
+
+function populateResistanceExercises(day, dateKey) {
+  const pool = routinePool();
+  const routine = nextRoutineFor(dateKey, pool);
+  setDayRoutine(day, routine, dateKey);
+  state.nextRoutineIndex = (pool.indexOf(routine) + 1) % pool.length;
 }
 
 // Picks today's stretch set from the library, prioritizing whichever ones haven't been
@@ -353,7 +425,7 @@ function workoutStatusLabel(day) {
   const w = day.workout;
   if (!w.type || w.type === "rest") return "Rest day";
   if (w.type === "resistance") {
-    const done = w.exercises.filter(ex => ex.sets.length > 0).length;
+    const done = w.exercises.filter(ex => loggedSets(ex).length > 0).length;
     return `${done}/${w.exercises.length} exercises`;
   }
   if (w.type === "run") {
@@ -420,6 +492,7 @@ function render() {
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === currentTab));
   const root = document.getElementById("view-root");
   const day = getOrCreateDay(viewDate);
+  slResyncDayRoutine(day, viewDate);
   slResyncPrescribedSets(day, viewDate);
   document.getElementById("day-counter").textContent = niceDate(viewDate);
   const streakBadge = document.getElementById("streak-badge");
@@ -669,6 +742,9 @@ function recentSessionWasRough(asOfKey) {
 // Purely a *default* — setWorkoutType always lets the user override it for that day.
 function suggestedWorkoutType(dateKey, previousType) {
   const scheduled = state.weeklySchedule[parseKey(dateKey).getDay()];
+  // Lifting only: run and climbing days come up open instead of as sessions you're "missing".
+  // The weekly schedule itself is untouched, so switching it off brings them straight back.
+  if (state.liftingOnly && (scheduled === "run" || scheduled === "boulder")) return null;
   if (!scheduled || scheduled === "rest") return scheduled;
 
   const fingersRecovered = daysSinceFingerLoadAsOf(dateKey) >= FINGER_RECOVERY_DAYS;
@@ -683,7 +759,27 @@ function suggestedWorkoutType(dateKey, previousType) {
   return scheduled;
 }
 
+// Turning lifting-only on also clears today's and any later run/climb days the app had
+// already laid out, as long as nothing was logged on them.
+function clearUntouchedCardioDays() {
+  const today = formatDateKey(new Date());
+  for (const [key, d] of Object.entries(state.days)) {
+    if (key < today || !d.workout) continue;
+    const w = d.workout;
+    if (w.type !== "run" && w.type !== "boulder") continue;
+    const runLogged = w.run && (w.run.miles !== "" || w.run.minutes !== "");
+    const coreLogged = (w.core || []).some(ex => ex.sets.length);
+    const b = w.boulder || {};
+    const climbLogged = b.minutes !== "" || (b.climbs || []).length || (b.grid || []).length || (b.warmupDone || []).some(Boolean);
+    if (runLogged || coreLogged || climbLogged || w.startedAt || w.durationMinutes != null) continue;
+    w.type = null;
+    w.core = [];
+    d.scheduledActivity = null;
+  }
+}
+
 function renderPullSuggestion(day) {
+  if (state.liftingOnly) return ""; // a climbing tip, and climbing's on pause
   if (day.workout.type !== "resistance" && day.workout.type !== "run") return "";
   if (daysSinceFingerLoad() < FINGER_RECOVERY_DAYS) return "";
   return `
@@ -932,7 +1028,7 @@ function lastFullSessionSets(name, beforeKey) {
     const d = state.days[dateKeys[i]];
     if (d.workout.type !== "resistance") continue;
     const ex = d.workout.exercises.find(e => e.name === name);
-    if (ex && ex.sets.length) return ex.sets.map(s => ({ weight: s.weight, reps: s.reps }));
+    if (ex && loggedSets(ex).length) return loggedSets(ex).map(s => ({ weight: s.weight, reps: s.reps }));
   }
   return null;
 }
@@ -953,7 +1049,16 @@ function isStrongLifts(routine) {
 // back to the normal rep-range rendering.
 function strongLiftsConfig(routine, exName) {
   if (!isStrongLifts(routine)) return null;
-  return routine.exercises.find(e => e.name === exName && e.scheme) || null;
+  const own = routine.exercises.find(e => e.name === exName && e.scheme);
+  if (own) return own;
+  // A program lift swapped in from the other workout (bench on a B day) still runs as the
+  // program — same history, same prescription — rather than turning into a plain exercise.
+  for (const r of state.routines) {
+    if (r === routine || !isStrongLifts(r)) continue;
+    const other = r.exercises.find(e => e.name === exName && e.scheme);
+    if (other) return other;
+  }
+  return null;
 }
 
 function slScheme(cfg) {
@@ -987,7 +1092,8 @@ function sameWeight(a, b) {
 }
 
 // Every past session of this lift, oldest first. Work sets are separated from lighter rows
-// by weight, so a warm-up typed into a set row doesn't read as a missed work set.
+// by weight, so a warm-up typed into a set row doesn't read as a missed work set. `hit` is
+// judged against `scheme`; slPrescription re-judges each session against the stage it was in.
 function slSessionHistory(name, beforeKey, scheme) {
   const sessions = [];
   for (const dateKey of Object.keys(state.days).sort()) {
@@ -1011,33 +1117,56 @@ function slSessionHistory(name, beforeKey, scheme) {
 // Re-derived from the logged sets on every call rather than kept as a stored counter, so
 // fixing or deleting a past session re-computes the right next weight instead of drifting
 // (and so importing a backup doesn't need a separate progression state to come with it).
-function slPrescription(cfg, beforeKey) {
-  const scheme = slScheme(cfg);
-  const sessions = slSessionHistory(cfg.name, beforeKey, scheme);
-  if (!sessions.length) {
-    return { scheme, weightKg: slStartKg(cfg), status: "start", failStreak: 0, last: null };
+// The lift's sets x reps after `deloads` deloads: the routine's own scheme (5x5) until the
+// second deload, then the STRONGLIFTS_STAGES step-downs (3x5, then 3x3). Never raises a scheme
+// you set lower yourself.
+function slStageScheme(base, deloads) {
+  let scheme = { ...base };
+  for (const stage of STRONGLIFTS_STAGES) {
+    if (deloads < stage.afterDeloads) break;
+    scheme = {
+      sets: stage.sets ? Math.min(base.sets, stage.sets) : scheme.sets,
+      reps: stage.reps ? Math.min(base.reps, stage.reps) : scheme.reps,
+    };
   }
+  return scheme;
+}
+
+function slPrescription(cfg, beforeKey) {
+  const base = slScheme(cfg);
+  const sessions = slSessionHistory(cfg.name, beforeKey, base);
+  if (!sessions.length) {
+    return { scheme: base, weightKg: slStartKg(cfg), status: "start", failStreak: 0, deloads: 0, last: null };
+  }
+  // Walk the history in order, judging each session against the scheme the lift was on at
+  // the time — a 3x5 session that hit all its reps is a hit, even though it isn't 5x5.
   let failStreak = 0;
+  let deloads = 0;
   let prev = null;
   for (const s of sessions) {
+    const scheme = slStageScheme(base, deloads);
+    s.hit = s.workSets.length >= scheme.sets && s.workSets.every(w => Number(w.reps) >= scheme.reps);
     if (s.hit) failStreak = 0;
     else if (prev && !sameWeight(s.workWeight, prev.workWeight)) failStreak = 1; // first miss at a new weight
     else failStreak++;
+    if (failStreak === STRONGLIFTS_FAILS_BEFORE_DELOAD) deloads++;
     prev = s;
   }
+  const scheme = slStageScheme(base, deloads);
   const last = sessions[sessions.length - 1];
   const step = slRoundStep();
   const lastDisplay = toDisplayWeight(last.workWeight);
   if (last.hit) {
     const next = roundToStep(lastDisplay + slIncrementDisplay(cfg), step);
-    return { scheme, weightKg: toStorageWeight(next), status: "up", failStreak: 0, last };
+    return { scheme, weightKg: toStorageWeight(next), status: "up", failStreak: 0, deloads, last };
   }
   if (failStreak >= STRONGLIFTS_FAILS_BEFORE_DELOAD) {
     const bar = BAR_WEIGHT[state.weightUnit];
     const cut = Math.max(bar, roundToStep(lastDisplay * STRONGLIFTS_DELOAD_FACTOR, step, "down"));
-    return { scheme, weightKg: toStorageWeight(cut), status: "deload", failStreak, last };
+    const stepDown = slSchemeLabel(scheme) !== slSchemeLabel(slStageScheme(base, deloads - 1));
+    return { scheme, weightKg: toStorageWeight(cut), status: "deload", failStreak, deloads, stepDown, last };
   }
-  return { scheme, weightKg: last.workWeight, status: "repeat", failStreak, last };
+  return { scheme, weightKg: last.workWeight, status: "repeat", failStreak, deloads, last };
 }
 
 // Empty-bar sets first, then 5/3/2 climbing to the work weight. Rows that land at or below
@@ -1090,6 +1219,9 @@ function slProgressionNote(p, cfg) {
     return `${lastLine} — all reps. Today: ${target} @ ${w}, up ${slIncrementDisplay(cfg)} ${state.weightUnit}.`;
   }
   if (p.status === "deload") {
+    if (p.stepDown) {
+      return `${lastLine} — third stall in a row, and this lift has stalled out before. Switching to ${target}: deload 10% to ${w} and climb with fewer, heavier-feeling sets.`;
+    }
     return `${lastLine} — third stall in a row. Deload 10% to ${w} for ${target}, then climb back with the reps you were missing.`;
   }
   const left = STRONGLIFTS_FAILS_BEFORE_DELOAD - p.failStreak;
@@ -1142,6 +1274,74 @@ function slResyncPrescribedSets(day, dateKey) {
     changed = true;
   }
   if (changed) saveState();
+}
+
+// The routine's accessory entry for an exercise (pull-ups, curls, the light bench), or null.
+function slAccessoryConfig(routine, exName) {
+  if (!isStrongLifts(routine)) return null;
+  return routine.exercises.find(e => e.name === exName && e.accessory) || null;
+}
+
+// A program lift's config from whichever StrongLifts routine has it — the light bench on B
+// days keys off Bench Press, which lives in A.
+function slProgramLiftConfig(name) {
+  const r = state.routines.find(isStrongLifts);
+  return r ? strongLiftsConfig(r, name) : null;
+}
+
+// Rows for an accessory: weights from the last time you logged it (reps as the target, not
+// filled in), the template default if you never have, or pct of the parent lift for a backoff.
+function slAccessoryRows(cfg, dateKey) {
+  const acc = cfg.accessory;
+  if (cfg.backoff) {
+    const parent = slProgramLiftConfig(cfg.backoff.of);
+    if (parent) {
+      const base = toDisplayWeight(slPrescription(parent, dateKey).weightKg);
+      const bar = BAR_WEIGHT[state.weightUnit];
+      const w = Math.max(bar, roundToStep(base * cfg.backoff.pct, slRoundStep(), "down"));
+      return Array.from({ length: acc.sets }, () => ({ weight: toStorageWeight(w), reps: "", target: acc.reps, prescribed: true }));
+    }
+  }
+  const last = lastFullSessionSets(cfg.name, dateKey);
+  if (last) {
+    const rows = last.map(s => ({ weight: s.weight, reps: "", target: Number(s.reps), prescribed: true }));
+    // Logged fewer sets than the template last time? Top up with copies of the last one.
+    while (rows.length < acc.sets) rows.push({ ...rows[rows.length - 1] });
+    return rows;
+  }
+  return Array.from({ length: acc.sets }, () => ({ weight: "", reps: "", target: acc.reps, prescribed: true }));
+}
+
+function slFillAccessorySets(day, dateKey) {
+  const routine = routineForDay(day);
+  if (!isStrongLifts(routine)) return;
+  for (const ex of day.workout.exercises) {
+    if (ex.sets.length || ex.quickAdd) continue;
+    const cfg = slAccessoryConfig(routine, ex.name);
+    if (cfg) ex.sets = slAccessoryRows(cfg, dateKey);
+  }
+}
+
+// A lifting day laid out ahead of time can end up with the wrong routine: it was written as
+// B, then you trained an A-day-after-skipping elsewhere, or flipped short sessions on. While
+// nothing on it has been logged (and you didn't pick the routine yourself), re-lay it with the
+// routine the rotation now says. Past days are history and never get rewritten.
+function slResyncDayRoutine(day, dateKey) {
+  if (!day || day.workout.type !== "resistance" || dateKey < formatDateKey(new Date())) return false;
+  if (day.workout.routinePinned || dayHasLoggedSets(day)) return false;
+  const current = routineForDay(day);
+  const pool = routinePool();
+  if (!pool.some(r => r.id === current.id) && current.id) return false; // a routine you picked outside the rotation
+  const next = nextRoutineFor(dateKey, pool);
+  if (!next) return false;
+  const want = routineExercisesForDay(next).map(e => e.name).join("|");
+  const have = day.workout.exercises.filter(e => !e.quickAdd).map(e => e.name).join("|");
+  if (next.id === current.id && want === have) return false;
+  const quickAdds = day.workout.exercises.filter(e => e.quickAdd);
+  setDayRoutine(day, next, dateKey);
+  day.workout.exercises.push(...quickAdds);
+  saveState();
+  return true;
 }
 
 // How many days a week the schedule actually sends you to the rack — the program wants three.
@@ -1239,15 +1439,38 @@ function renderCoreExerciseBlock(ex, exIdx) {
   `;
 }
 
+function platePairs() {
+  return (state.platePairs && state.platePairs[state.weightUnit]) || DEFAULT_PLATE_PAIRS[state.weightUnit];
+}
+
+function maxLoadable() {
+  const pairs = platePairs();
+  return BAR_WEIGHT[state.weightUnit] + 2 * Object.entries(pairs).reduce((sum, [size, n]) => sum + Number(size) * n, 0);
+}
+
+// Plate chips sized and colored by weight, inside-out from the collar — the order you load them.
+function plateChips(plates) {
+  return plates.map(p => `<span class="plate-chip plate-${state.weightUnit}-${String(p).replace(".", "_")}">${p}</span>`).join("");
+}
+
 function renderPlateCalc(weightKg) {
   if (weightKg === "" || weightKg === null || weightKg === undefined || !Number(weightKg)) return "";
   const displayWeight = toDisplayWeight(weightKg);
-  const result = plateBreakdown(displayWeight, state.weightUnit);
-  if (!result) return `<div class="plate-calc">Lighter than the empty bar (${BAR_WEIGHT[state.weightUnit]} ${state.weightUnit})</div>`;
-  const chips = result.plates.length
-    ? result.plates.map(p => `<span class="plate-chip">${p}</span>`).join("")
-    : `<span class="plate-calc-label">bar only</span>`;
-  return `<div class="plate-calc"><span class="plate-calc-label">Per side:</span> ${chips}</div>`;
+  const unit = state.weightUnit;
+  const result = plateBreakdown(displayWeight, unit, platePairs());
+  if (!result) return `<div class="plate-calc">Empty bar (${BAR_WEIGHT[unit]} ${unit})</div>`;
+  const chips = result.plates.length ? plateChips(result.plates) : `<span class="plate-calc-label">bar only</span>`;
+  const short = result.short > 0
+    ? `<div class="plate-calc-warn">Can't make ${displayWeight} exactly with your plates — this loads ${Math.round((displayWeight - result.short * 2) * 100) / 100}.</div>`
+    : "";
+  return `<div class="plate-calc"><span class="plate-calc-label">Each side:</span> ${chips}</div>${short}`;
+}
+
+// Compact "185: 45·25" text for the warm-up line, so every jump shows what to add.
+function plateSummary(displayWeight) {
+  const result = plateBreakdown(displayWeight, state.weightUnit, platePairs());
+  if (!result) return "bar";
+  return result.plates.length ? result.plates.join("·") : "bar";
 }
 
 function renderBoulderGrid(sessionType, grid) {
@@ -1284,6 +1507,7 @@ function renderWorkoutTimerControl(day) {
       <div class="timer-display" style="padding:10px 0; margin-bottom:12px;">
         <div class="timer-phase">Workout in progress</div>
         <div class="timer-clock" id="workout-timer-clock" style="font-size:28px;">${formatMMSS((Date.now() - w.startedAt) / 1000)}</div>
+        ${(Date.now() - w.startedAt) / 60000 > WORKOUT_TIMER_SANITY_MINUTES ? `<div class="meal-item-macro" style="color:var(--warn);">Still going? This has been running over ${WORKOUT_TIMER_SANITY_MINUTES / 60} hours — End it and you can enter the real time.</div>` : ""}
         <button class="btn secondary" data-action="endWorkoutTimer" style="margin-top:8px;">⏹ End workout</button>
       </div>
     `;
@@ -1322,7 +1546,7 @@ function renderStrongLiftsExerciseBlock(ex, exIdx, cfg, workout) {
         <input type="number" inputmode="decimal" step="${slRoundStep()}" data-action="slSetWorkWeight" data-ex="${exIdx}" value="${toDisplayWeight(workWeightKg)}">
       </div>
       <div data-sl-plate-for="${exIdx}">${renderPlateCalc(workWeightKg)}</div>
-      ${warmup.length ? `<div class="meal-item-macro" style="margin-bottom:8px;">Warm-up, not logged: ${warmup.map(r => `${r.weight}×${r.reps}`).join(" → ")} → work sets</div>` : ""}
+      ${warmup.length ? `<div class="warmup-list"><div class="meal-item-macro">Warm-up (not logged) — plates per side:</div>${warmup.map(r => `<div class="warmup-row"><span>${r.weight} × ${r.reps}</span><span class="plate-calc-label">${plateSummary(r.weight)}</span></div>`).join("")}</div>` : ""}
       ${ex.sets.length ? ex.sets.map((s, sIdx) => {
         const reps = Number(s.reps) || 0;
         const hit = reps >= scheme.reps;
@@ -1344,11 +1568,60 @@ function renderStrongLiftsExerciseBlock(ex, exIdx, cfg, workout) {
   `;
 }
 
+// Pull-ups, curls and the light bench on a StrongLifts day: rows open at last time's weights
+// with that rep count as the target, and the check button logs it in one tap. Outside the
+// program — nothing here moves a working weight.
+function renderAccessoryBlock(ex, exIdx, cfg) {
+  const acc = cfg.accessory;
+  const done = loggedSets(ex).length;
+  const last = lastSessionFor(ex.name, viewDate);
+  const sub = cfg.backoff
+    ? `${Math.round(cfg.backoff.pct * 100)}% of your ${cfg.backoff.of} work weight — extra practice, doesn't count toward progression.`
+    : last ? `Last: ${acc.bodyweight && !last.weight ? "bodyweight" : formatKgLb(last.weight)} × ${last.reps} (${niceDate(last.dateKey)}) — filled in below.` : `Target ${acc.sets}×${acc.reps}.`;
+  return `
+    <div class="exercise-block">
+      <div class="row">
+        <h3 style="margin:0;">${ex.name} <span class="recurring-tag">${cfg.optional ? "optional" : "accessory"}</span></h3>
+        <span class="meal-item-macro">${done}/${ex.sets.length}</span>
+      </div>
+      <div class="meal-item-macro" style="margin:6px 0 8px;">${sub}${cfg.optional ? " Skip it when you're short on time." : ""}</div>
+      ${ex.sets.map((s, sIdx) => {
+        const reps = Number(s.reps) || 0;
+        const target = Number(s.target) || acc.reps;
+        return `
+        <div class="set-row-flex">
+          <div class="set-num">${sIdx + 1}</div>
+          <input type="number" inputmode="decimal" placeholder="${acc.bodyweight ? "BW" : state.weightUnit}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${toDisplayWeight(s.weight)}">
+          <input type="number" inputmode="numeric" placeholder="${target} reps" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
+          <button class="btn ${reps ? "" : "secondary"}" data-action="accLogSet" data-ex="${exIdx}" data-set="${sIdx}" style="min-width:58px; padding:8px 10px;">✓ ${reps || target}</button>
+          <button class="remove-set" data-action="removeSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
+        </div>
+        ${ex.barbell && s.weight ? `<div data-plate-for="${exIdx}-${sIdx}">${renderPlateCalc(s.weight)}</div>` : ""}`;
+      }).join("")}
+      <button class="btn secondary" data-action="addSet" data-ex="${exIdx}" style="width:100%;">+ Add set</button>
+    </div>
+  `;
+}
+
+// A / B buttons on a program day. The app picks for you (the one after your last logged
+// session); tapping the other one pins this day to it.
+function renderStrongLiftsRoutinePicker(day, routine) {
+  const slActive = routinePool().filter(isStrongLifts);
+  if (slActive.length < 2) return "";
+  return `
+    <div class="row" style="gap:6px; margin-bottom:10px;">
+      ${slActive.map(r => `<button class="btn ${r.id === routine.id ? "" : "secondary"}" data-action="slPickRoutine" data-routine="${r.id}" style="flex:1; padding:8px;">${r.name.replace("StrongLifts ", "Workout ")}</button>`).join("")}
+    </div>
+  `;
+}
+
 function renderWorkoutBody(day) {
   const w = day.workout;
   if (w.type === "resistance") {
     const routine = routineForDay(day);
-    const routineHeader = routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong>${isStrongLifts(routine) ? " — StrongLifts 5×5. Every work set is the same weight; reps are all you log." : ""}</div>` : "";
+    const routineHeader = isStrongLifts(routine)
+      ? renderStrongLiftsRoutinePicker(day, routine) + `<div class="meal-item-macro" style="margin-bottom:10px;"><strong>${routine.name}</strong> — every work set is the same weight; tap ✓ as you finish each set.</div>`
+      : routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong></div>` : "";
     const restBanner = restTimerRemaining > 0 ? `
       <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
         <div class="timer-phase">Resting</div>
@@ -1359,6 +1632,8 @@ function renderWorkoutBody(day) {
     return renderWorkoutTimerControl(day) + restBanner + routineHeader + w.exercises.map((ex, exIdx) => {
       const slCfg = ex.quickAdd ? null : strongLiftsConfig(routine, ex.name);
       if (slCfg) return renderStrongLiftsExerciseBlock(ex, exIdx, slCfg, w);
+      const accCfg = ex.quickAdd ? null : slAccessoryConfig(routine, ex.name);
+      if (accCfg) return renderAccessoryBlock(ex, exIdx, accCfg);
       const last = lastSessionFor(ex.name, viewDate);
       const lastFullSets = lastFullSessionSets(ex.name, viewDate);
       return `
@@ -1527,13 +1802,14 @@ function collectExerciseHistory(name) {
   for (const [dateKey, day] of Object.entries(state.days)) {
     if (day.workout.type !== "resistance") continue;
     const ex = day.workout.exercises.find(e => e.name === name);
-    if (!ex || ex.sets.length === 0) continue;
+    const sets = ex ? loggedSets(ex) : [];
+    if (!sets.length) continue;
     let topWeight = 0, topSet = null;
-    for (const s of ex.sets) {
+    for (const s of sets) {
       const w = Number(s.weight) || 0;
       if (w >= topWeight) { topWeight = w; topSet = s; }
     }
-    if (topSet) rows.push({ dateKey, weight: Number(topSet.weight) || 0, reps: Number(topSet.reps) || 0, sets: ex.sets.length });
+    if (topSet) rows.push({ dateKey, weight: Number(topSet.weight) || 0, reps: Number(topSet.reps) || 0, sets: sets.length });
   }
   rows.sort((a, b) => a.dateKey.localeCompare(b.dateKey));
   return rows;
@@ -1595,23 +1871,17 @@ function renderUpcomingSchedule(daysAhead) {
   `;
 }
 
-// Which routine populates the next resistance day — the rotation is by session, not by
-// weekday, so "next" only makes sense as a position in the A/B cycle.
-function nextRoutineUp() {
-  const active = state.routines.filter(r => r.active);
-  const pool = active.length ? active : state.routines;
-  return pool[state.nextRoutineIndex % pool.length] || null;
-}
-
 // A standing answer to "am I actually running this program?" — the two things people get
 // wrong are treating A and B as a weekday split and training it twice a week.
 function renderStrongLiftsProgramCard() {
   const slRoutines = state.routines.filter(isStrongLifts);
   if (!slRoutines.length) return "";
   const active = slRoutines.filter(r => r.active);
-  const next = nextRoutineUp();
+  const next = nextRoutineFor(formatDateKey(new Date()));
   const resistanceDays = scheduledResistanceDays();
-  const scheduleOk = resistanceDays === STRONGLIFTS_SESSIONS_PER_WEEK;
+  // In lifting-only mode you lift whenever you can and the rotation follows the sessions, so
+  // the weekday count isn't worth nagging about.
+  const scheduleOk = state.liftingOnly || resistanceDays === STRONGLIFTS_SESSIONS_PER_WEEK;
   return `
     <div class="card">
       <h2>StrongLifts 5×5</h2>
@@ -1625,8 +1895,14 @@ function renderStrongLiftsProgramCard() {
       ${active.length === 2
         ? `<div class="meal-item-macro">Next session: <strong>${next ? next.name : "—"}</strong></div>`
         : `<div class="meal-item-macro" style="color:var(--warn, #e0a940);">Both StrongLifts routines need to be Active for A/B to alternate — ${active.length} of 2 currently are.</div>`}
+      <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:13px;">
+        <input type="checkbox" data-action="slToggleShortSessions" ${state.slShortSessions ? "checked" : ""} style="width:auto; margin-top:2px;">
+        <span><strong>Short sessions</strong> — squat and bench/press, then pull-ups and curls. Leaves ${STRONGLIFTS_SHORT_SKIP.slice(0, 2).join(" and ")} off A/B days (they stay in the routines).</span>
+      </label>
       <div class="meal-item-macro" style="margin-top:6px;">
-        ${scheduleOk
+        ${state.liftingOnly
+          ? `Lifting only: pick <strong>Lift</strong> on whatever day you train — A/B alternates by session.`
+          : scheduleOk
           ? `Schedule: ${resistanceDays} resistance days a week ✓`
           : `Schedule: ${resistanceDays} resistance day${resistanceDays === 1 ? "" : "s"} a week — the program wants ${STRONGLIFTS_SESSIONS_PER_WEEK}.`}
       </div>
@@ -1778,7 +2054,7 @@ function renderResistanceProgression() {
   for (const day of Object.values(state.days)) {
     if (day.workout.type !== "resistance") continue;
     for (const ex of day.workout.exercises) {
-      if (ex.sets.length > 0) loggedNames.add(ex.name);
+      if (loggedSets(ex).length > 0) loggedNames.add(ex.name);
     }
   }
 
@@ -2038,8 +2314,25 @@ function renderSettings() {
     </div>
     <div class="card">
       <h2>Weekly schedule</h2>
+      <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; font-size:13px;">
+        <input type="checkbox" data-action="toggleLiftingOnly" ${state.liftingOnly ? "checked" : ""} style="width:auto; margin-top:2px;">
+        <span><strong>Lifting only for now</strong> — run and climbing days come up as open days instead of sessions to log. Your schedule below and all your history stay as they are; switch this off to bring them back.</span>
+      </label>
       <div class="meal-item-macro" style="margin-bottom:10px;">Sets the recurring weekly pattern going forward. Days you've already logged won't change.</div>
       ${renderScheduleEditor()}
+    </div>
+    <div class="card">
+      <h2>Plates</h2>
+      <div class="meal-item-macro" style="margin-bottom:10px;">Pairs you own (one plate per side). The plate calculator only uses what's here, and warns when a weight can't be made exactly. Bar: ${BAR_WEIGHT[state.weightUnit]} ${state.weightUnit}.</div>
+      <div class="plate-inventory">
+        ${PLATE_DENOMS[state.weightUnit].map(size => `
+          <div class="field" style="margin:0;">
+            <label>${size} ${state.weightUnit}</label>
+            <input type="number" inputmode="numeric" min="0" step="1" data-action="setPlatePairs" data-size="${size}" value="${platePairs()[size] || 0}">
+          </div>
+        `).join("")}
+      </div>
+      <div class="meal-item-macro" style="margin-top:8px;">Heaviest you can load: ${maxLoadable()} ${state.weightUnit}</div>
     </div>
     <div class="card">
       <h2>Backup</h2>
@@ -2399,11 +2692,10 @@ function runningMET(paceMph) {
   return vo2 / 3.5;
 }
 
-// Sets that actually have both a weight and a rep count logged — placeholder rows the
-// user added but hasn't filled in yet shouldn't count toward the calorie estimate.
+// Sets with reps logged — placeholder rows the user added (or the app pre-filled) but hasn't
+// done yet shouldn't count toward the calorie estimate. Weight can be blank: pull-ups.
 function loggedResistanceSetCount(day) {
-  return day.workout.exercises.reduce((count, ex) =>
-    count + ex.sets.filter(s => s.weight !== "" && s.weight != null && s.reps !== "" && s.reps != null).length, 0);
+  return day.workout.exercises.reduce((count, ex) => count + loggedSets(ex).length, 0);
 }
 
 // Exercise calorie bonus via MET x bodyweight x time, using whatever's actually been
@@ -3269,7 +3561,12 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "endWorkoutTimer") {
     if (workoutTimerIntervalId) { clearInterval(workoutTimerIntervalId); workoutTimerIntervalId = null; }
     if (day.workout.startedAt) {
-      const minutes = (Date.now() - day.workout.startedAt) / 60000;
+      let minutes = (Date.now() - day.workout.startedAt) / 60000;
+      if (minutes > WORKOUT_TIMER_SANITY_MINUTES) {
+        const answer = prompt(`The timer ran ${Math.round(minutes)} min — probably left running. How many minutes did you actually train? (Cancel keeps ${Math.round(minutes)}.)`, "75");
+        const fixed = Number(answer);
+        if (answer !== null && fixed > 0) minutes = fixed;
+      }
       day.workout.durationMinutes = Math.round(minutes * 10) / 10;
       day.workout.startedAt = null;
       if (day.workout.type === "boulder") day.workout.boulder.minutes = Math.round(minutes);
@@ -3379,6 +3676,29 @@ document.getElementById("view-root").addEventListener("click", e => {
     }
     saveState(); render(); return;
   }
+  // Picking A or B by hand: re-lays the day with that workout and pins it, so the automatic
+  // rotation leaves it alone. Asks first if anything's already logged, since it starts over.
+  if (action === "slPickRoutine") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    if (!routine || routine.id === day.workout.routineId) return;
+    if (dayHasLoggedSets(day) && !confirm(`Switch to ${routine.name}? The sets logged so far on this day will be cleared.`)) return;
+    const quickAdds = day.workout.exercises.filter(e => e.quickAdd);
+    setDayRoutine(day, routine, viewDate);
+    day.workout.exercises.push(...quickAdds);
+    day.workout.routinePinned = true;
+    saveState(); render(); return;
+  }
+  if (action === "accLogSet") {
+    const ex = day.workout.exercises[Number(el.dataset.ex)];
+    const set = ex.sets[Number(el.dataset.set)];
+    const cfg = slAccessoryConfig(routineForDay(day), ex.name);
+    const target = Number(set.target) || (cfg ? cfg.accessory.reps : 0);
+    const wasDone = Number(set.reps) > 0;
+    set.reps = wasDone ? "" : target;
+    saveState();
+    if (!wasDone) startRestTimer(STRONGLIFTS_REST.clean);
+    render(); return;
+  }
   if (action === "slLoadPrescribed") {
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     const cfg = ex.quickAdd ? null : strongLiftsConfig(routineForDay(day), ex.name);
@@ -3403,6 +3723,7 @@ document.getElementById("view-root").addEventListener("click", e => {
   if (action === "addSet") {
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     const routine = routineForDay(day);
+    day.workout.routinePinned = true;
     const slCfg = ex.quickAdd ? null : strongLiftsConfig(routine, ex.name);
     if (slCfg) {
       // Extra sets on a StrongLifts lift stay at the working weight — the program never
@@ -3476,6 +3797,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     ex.barbell = barbell;
     ex.sets = [];
     swapExerciseIndex = null;
+    day.workout.routinePinned = true;
     saveState(); render(); return;
   }
   if (action === "toggleQuickAddCore") {
@@ -3499,6 +3821,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     const ex = day.workout.exercises[exIdx];
     const removed = ex.sets[setIdx];
     ex.sets.splice(setIdx, 1);
+    day.workout.routinePinned = true;
     recordUndo("Set removed", () => { ex.sets.splice(setIdx, 0, removed); });
     saveState(); render(); return;
   }
@@ -3796,11 +4119,19 @@ document.getElementById("view-root").addEventListener("input", e => {
     saveState();
     return;
   }
+  if (action === "setPlatePairs") {
+    const unit = state.weightUnit;
+    if (!state.platePairs[unit]) state.platePairs[unit] = {};
+    state.platePairs[unit][el.dataset.size] = Math.max(0, Math.floor(Number(el.value) || 0));
+    saveState();
+    return;
+  }
   if (action === "slSetWorkWeight") {
     const exIdx = Number(el.dataset.ex);
     const ex = day.workout.exercises[exIdx];
     const weight = toStorageWeight(el.value);
     ex.sets.forEach(s => { s.weight = weight; delete s.prescribed; });
+    day.workout.routinePinned = true;
     saveState();
     // Patched in place rather than re-rendered so the weight box keeps focus mid-typing.
     const wrap = document.querySelector(`[data-sl-plate-for="${exIdx}"]`);
@@ -3813,6 +4144,7 @@ document.getElementById("view-root").addEventListener("input", e => {
     const ex = day.workout.exercises[exIdx];
     const field = el.dataset.field;
     ex.sets[setIdx][field] = field === "weight" ? toStorageWeight(el.value) : (el.value === "" ? "" : Number(el.value));
+    day.workout.routinePinned = true;
     saveState();
     if (field === "weight" && ex.barbell) {
       const wrap = document.querySelector(`[data-plate-for="${exIdx}-${setIdx}"]`);
@@ -3874,6 +4206,15 @@ document.getElementById("view-root").addEventListener("change", e => {
   if (action === "setCoreField" && (el.dataset.field === "reps" || el.dataset.field === "seconds") && el.value !== "") {
     startRestTimer(CORE_REST_SECONDS);
     return;
+  }
+  if (action === "slToggleShortSessions") {
+    state.slShortSessions = el.checked;
+    saveState(); render(); return; // render's resync re-lays today if nothing's logged yet
+  }
+  if (action === "toggleLiftingOnly") {
+    state.liftingOnly = el.checked;
+    if (state.liftingOnly) clearUntouchedCardioDays();
+    saveState(); render(); return;
   }
   if (action === "toggleRoutineExerciseBarbell") {
     const routine = state.routines.find(r => r.id === el.dataset.routine);

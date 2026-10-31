@@ -64,9 +64,28 @@ fixing a mistyped session (or restoring a backup) recomputes the right next weig
 of drifting. Set the weight by hand any time and the app stops second-guessing that lift
 until you start logging reps again.
 
+- **Steps down when 5x5 runs out.** The first deload keeps 5x5; if the lift stalls out again
+  the second deload switches it to 3x5, and the third to 3x3 — fewer sets, weight keeps climbing.
+- **Picks A or B for you.** The next workout is the one after your last *logged* session, so a
+  skipped day doesn't throw off the rotation. Tap Workout A / Workout B at the top of the day to
+  override it. A program lift swapped onto the other day (bench on a B day) still runs as the
+  program.
+- **Short sessions** (on by default, toggle on the StrongLifts card): squat and bench or press,
+  then pull-ups and curls. Rows and deadlifts stay in the routines, just off the day.
+- **Accessories open pre-filled.** Pull-ups and curls come up at what you did last time, with
+  a ✓ to log each set in one tap. B days also offer an optional light bench (2x8 at 80% of your
+  bench) that doesn't count toward progression.
+- **Loads the bar.** Every working weight and warm-up step shows the plates per side, using only
+  the plates you own (**Settings → Plates**, counted in pairs). It warns when a weight can't be
+  made exactly.
+
 Sets, reps and the jump per session are editable per lift in **Workout routines**, and any
 extra exercise you add to an A or B day is treated as a normal accessory, outside the
 program.
+
+**Lifting only for now** (Settings → Weekly schedule) turns run and climbing days into open
+days instead of sessions to log, without touching the schedule or history. The workout timer
+also asks for the real length if it's been running over two hours.
 
 ## Tests
 

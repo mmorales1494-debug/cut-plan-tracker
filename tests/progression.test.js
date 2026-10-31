@@ -18,8 +18,10 @@ S.nextRoutineIndex = 0;
 const [A, B] = S.routines;
 
 // ---- template shape ----
-eq(A.exercises.map(e => e.name), ["Squat", "Bench Press", "Barbell Row"], "A lifts");
-eq(B.exercises.map(e => e.name), ["Squat", "Overhead Press", "Deadlift"], "B lifts");
+eq(A.exercises.filter(e => e.scheme).map(e => e.name), ["Squat", "Bench Press", "Barbell Row"], "A lifts");
+eq(B.exercises.filter(e => e.scheme).map(e => e.name), ["Squat", "Overhead Press", "Deadlift"], "B lifts");
+eq(A.exercises.filter(e => e.accessory).map(e => e.name), ["Pull-Up", "Bicep Curl (Dumbbell)"], "A accessories");
+eq(B.exercises.filter(e => e.accessory).map(e => e.name), ["Bench Press (light)", "Pull-Up", "Bicep Curl (Dumbbell)"], "B accessories");
 eq(B.exercises[2].scheme, { sets: 1, reps: 5 }, "deadlift is 1x5");
 eq(A.exercises[0].scheme, { sets: 5, reps: 5 }, "squat is 5x5");
 eq(ctx.isStrongLifts(A), true, "A is a program routine");

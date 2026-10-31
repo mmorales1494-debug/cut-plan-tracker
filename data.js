@@ -95,24 +95,46 @@ const ML_PER_OZ = 29.5735;
 // Standard barbell + plate assumptions for the plate-loading calculator.
 const BAR_WEIGHT = { kg: 20, lb: 45 };
 const PLATE_DENOMS = {
-  kg: [20, 15, 10, 5, 2.5, 1.25],
-  lb: [45, 35, 25, 10, 5, 2.5],
+  kg: [25, 20, 15, 10, 5, 2.5, 1.25],
+  lb: [45, 35, 25, 15, 10, 5, 2.5],
 };
 
-// Greedy plate breakdown for one side of the bar. Returns null if the target is
-// lighter than an empty bar (nothing to load).
-function plateBreakdown(totalWeight, unit) {
+// Plates on hand, as a count of PAIRS per size (one plate for each side of the bar). Editable
+// in Settings — the default is one pair of every standard size.
+const DEFAULT_PLATE_PAIRS = {
+  lb: { 45: 1, 35: 1, 25: 1, 15: 1, 10: 1, 5: 1, 2.5: 1 },
+  kg: { 25: 0, 20: 1, 15: 1, 10: 1, 5: 1, 2.5: 1, 1.25: 1 },
+};
+
+// Fewest-plates way to load one side of the bar from the pairs on hand. Returns null if the
+// target is no heavier than an empty bar (nothing to load), or { plates, bar, short } where
+// short > 0 means the inventory can't make the weight exactly and `plates` is the closest load
+// under it. Greedy isn't enough once counts are limited (60/side from one 45 and one 35 needs
+// 45+15, not 35+25), so this searches every combination — at most a few hundred for a home set.
+function plateBreakdown(totalWeight, unit, pairs) {
   const bar = BAR_WEIGHT[unit];
-  let perSide = (totalWeight - bar) / 2;
+  const perSide = Math.round(((totalWeight - bar) / 2) * 100) / 100;
   if (perSide <= 0) return null;
-  const plates = [];
-  for (const denom of PLATE_DENOMS[unit]) {
-    while (perSide >= denom - 0.05) {
-      plates.push(denom);
-      perSide -= denom;
+  const inventory = pairs || Object.fromEntries(PLATE_DENOMS[unit].map(d => [d, 99]));
+  const sizes = Object.keys(inventory).map(Number).filter(d => inventory[d] > 0).sort((a, b) => b - a);
+  let best = null;
+  const pick = [];
+  (function search(i, remaining) {
+    if (Math.abs(remaining) < 0.01) {
+      if (!best || best.short > 0 || pick.length < best.plates.length) best = { plates: pick.slice(), short: 0 };
+      return;
     }
-  }
-  return { plates, bar };
+    if (!best || (best.short > 0 && remaining < best.short)) best = { plates: pick.slice(), short: Math.round(remaining * 100) / 100 };
+    if (i >= sizes.length) return;
+    const size = sizes[i];
+    const max = Math.min(inventory[size], Math.floor((remaining + 0.01) / size));
+    for (let n = max; n >= 0; n--) {
+      for (let k = 0; k < n; k++) pick.push(size);
+      search(i + 1, remaining - n * size);
+      pick.length -= n;
+    }
+  })(0, perSide);
+  return { plates: best.plates, bar, short: best.short };
 }
 
 // ---------- StrongLifts 5x5 ----------
@@ -133,6 +155,10 @@ const STRONGLIFTS_SCHEDULE_DAYS = [1, 3, 5]; // Mon/Wed/Fri — the canonical sp
 const STRONGLIFTS_ROUND_STEP = { lb: 5, kg: 2.5 };
 
 const STRONGLIFTS_FAILS_BEFORE_DELOAD = 3;
+
+// Past this, a running workout timer was almost certainly left on — ending it asks for the
+// real length instead of logging a 3-hour session (which would also inflate workout calories).
+const WORKOUT_TIMER_SANITY_MINUTES = 120;
 const STRONGLIFTS_DELOAD_FACTOR = 0.9; // cut 10% and climb back with better form/bar speed
 
 // Rest between work sets scales with how the last set went. The program calls for 90s when
@@ -157,18 +183,40 @@ const STRONGLIFTS_WARMUP_RAMP = [
 // start = where the program says to begin a lift with no history yet.
 // fromFloor skips the empty-bar warm-up sets — a loaded bar on the floor is already at
 // pulling height, an empty one isn't.
+//
+// Entries with `accessory` instead of `scheme` sit outside the program: they open pre-filled
+// from the last time you did them (or these defaults), and never drive progression.
+// `backoff` makes an accessory a lighter version of a program lift — its weight is pct of
+// that lift's current prescription. `optional` ones are labeled skippable.
 const STRONGLIFTS_TEMPLATE = {
   A: [
     { name: "Squat", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
     { name: "Bench Press", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
     { name: "Barbell Row", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 65, kg: 30 } },
+    { name: "Pull-Up", barbell: false, accessory: { sets: 3, reps: 8, bodyweight: true } },
+    { name: "Bicep Curl (Dumbbell)", barbell: false, accessory: { sets: 3, reps: 10 } },
   ],
   B: [
     { name: "Squat", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
     { name: "Overhead Press", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
     { name: "Deadlift", barbell: true, scheme: { sets: 1, reps: 5 }, increment: { lb: 10, kg: 5 }, start: { lb: 95, kg: 40 }, fromFloor: true },
+    { name: "Bench Press (light)", barbell: true, optional: true, accessory: { sets: 2, reps: 8 }, backoff: { of: "Bench Press", pct: 0.8 } },
+    { name: "Pull-Up", barbell: false, accessory: { sets: 3, reps: 8, bodyweight: true } },
+    { name: "Bicep Curl (Dumbbell)", barbell: false, accessory: { sets: 3, reps: 10 } },
   ],
 };
+
+// "Short sessions" leaves these out of A/B days — for when there's time for the squat and
+// one press, then pull-ups and curls, and that's it. They stay in the routine, one toggle away.
+const STRONGLIFTS_SHORT_SKIP = ["Barbell Row", "Deadlift", "Band External Rotation"];
+
+// What happens after repeated deloads on the same lift: the first deload just cuts 10% and
+// stays 5x5; the second drops to 3x5; the third and later to 3x3. Fewer, heavier-feeling
+// sets keep the weight climbing after 5x5 runs out — the usual StrongLifts path.
+const STRONGLIFTS_STAGES = [
+  { afterDeloads: 2, sets: 3 },
+  { afterDeloads: 3, sets: 3, reps: 3 },
+];
 
 // Core work targets — spec just says "10-15 min, progressive," so these are reasonable
 // bodyweight/ab-work defaults: higher rep range than resistance work, same set count.

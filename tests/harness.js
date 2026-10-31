@@ -40,7 +40,7 @@ const ctx = {
   requestAnimationFrame: cb => setTimeout(cb, 0),
   indexedDB: { open: () => ({ addEventListener() {} }) },
   AudioContext: function () { return { createOscillator: () => ({ connect() {}, start() {}, stop() {}, frequency: {} }), createGain: () => ({ connect() {}, gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} } }), destination: {}, currentTime: 0 }; },
-  alert: () => {}, confirm: () => true, fetch: () => Promise.reject(new Error("no network")),
+  alert: () => {}, confirm: () => true, prompt: () => null, fetch: () => Promise.reject(new Error("no network")),
   Blob: function () {}, URL: { createObjectURL: () => "", revokeObjectURL() {} },
   FileReader: function () {},
   Date, Math, JSON, Object, Array, String, Number, Boolean, Set, Map, Promise, Error, isNaN, parseInt, parseFloat,

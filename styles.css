@@ -467,15 +467,45 @@ button.btn:disabled {
   color: var(--text-dim);
 }
 .plate-calc-label { margin-right: 4px; }
+.plate-calc { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+/* Plates drawn like they sit on the sleeve: heavier = taller, collar-side first. */
 .plate-chip {
-  display: inline-block;
-  background: var(--accent-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   color: var(--text);
   border-radius: 4px;
-  padding: 2px 6px;
-  margin-right: 3px;
+  padding: 0 5px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
+}
+.plate-lb-45, .plate-kg-25, .plate-kg-20 { height: 30px; background: var(--accent-dim); border-color: var(--accent); }
+.plate-lb-35, .plate-kg-15 { height: 27px; background: var(--accent-dim); }
+.plate-lb-25, .plate-kg-10 { height: 24px; }
+.plate-lb-15, .plate-kg-5 { height: 21px; }
+.plate-lb-10, .plate-kg-2_5 { height: 18px; }
+.plate-lb-5, .plate-lb-2_5, .plate-kg-1_25 { height: 15px; font-size: 10px; }
+.plate-calc-warn {
+  margin: -4px 0 8px 36px;
+  font-size: 11px;
+  color: var(--warn);
+}
+.warmup-list { margin-bottom: 10px; }
+.warmup-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.plate-inventory {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .field {
