@@ -38,4 +38,5 @@ Any time you want to change the meal defaults, exercises, or targets, edit `data
 ## Data & backup
 
 - All logs are stored locally on your phone only (`localStorage` + `IndexedDB`) — nothing is sent anywhere.
-- Use **Progress → Export JSON** periodically to download a backup file, in case you ever reset Safari or switch phones. **Import JSON** on the same tab restores it.
+- Use **Settings (gear) → Export JSON** periodically to download a backup file, in case you ever reset Safari or switch phones. **Import JSON** on the same screen restores it.
+- **Export JSON without photos** gives a much smaller file with all your logs but no progress photos — handy for sharing, but not a full backup. Importing it leaves the photos already on the phone alone.

@@ -1697,6 +1697,7 @@ function renderSettings() {
         </label>
       </div>
       <button class="btn secondary" data-action="exportCSV" style="width:100%; margin-top:8px;">Export CSV (weight/nutrition history)</button>
+      <button class="btn secondary" data-action="exportDataNoPhotos" style="width:100%; margin-top:8px;">Export JSON without photos (small, not a full backup)</button>
     </div>
     <div class="card">
       <h2>Storage</h2>
@@ -3276,6 +3277,7 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "exportData") { exportData(); return; }
   if (action === "exportCSV") { exportCSV(); return; }
+  if (action === "exportDataNoPhotos") { exportDataNoPhotos(); return; }
   if (action === "archiveOldDays") { archiveOldDays(); return; }
   if (action === "setBodyWeightEntryUnit") {
     bodyWeightEntryUnit = el.dataset.unit;
@@ -3559,6 +3561,17 @@ async function exportData() {
   a.download = `ledge-backup-${formatDateKey(new Date())}.json`;
   a.click();
   if (currentTab === "progress") render();
+}
+
+// Same state as exportData() but with no photos, for a file small enough to share. Leaves
+// lastExportAt alone since it isn't a full backup, and importing it keeps existing photos.
+function exportDataNoPhotos() {
+  const payload = { state, exportedAt: new Date().toISOString(), photosOmitted: true };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `ledge-data-${formatDateKey(new Date())}.json`;
+  a.click();
 }
 
 function buildHistoryCSV() {
