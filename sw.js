@@ -1,4 +1,4 @@
-const CACHE_NAME = "ledge-shell-v4";
+const CACHE_NAME = "ledge-shell-v5";
 const SHELL_FILES = [
   "./",
   "./index.html",
