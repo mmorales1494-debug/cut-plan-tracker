@@ -2347,10 +2347,11 @@ function renderSettings() {
       </label>
       <label class="check-row">
         <input type="checkbox" data-action="toggleRestAlarmIgnoreSilent" ${state.restAlarmIgnoreSilent ? "checked" : ""}>
-        <span><strong>Sound it even when the phone is on silent</strong> — pauses any music that's playing while the alarm goes off.</span>
+        <span><strong>Cut through my music and the silent switch</strong> — pauses your music when the alarm goes off (hit play again after). Turn this on if you listen with headphones or keep the phone on silent; otherwise the alarm plays quietly mixed under your music, or not at all on silent.</span>
       </label>
       <button class="btn secondary" data-action="testRestAlarm" style="width:100%; margin-top:10px;">Test the alarm</button>
-      <div class="meal-item-macro" style="margin-top:8px;">Keep Ledge open during rest — the screen stays on. iPhone pauses web apps that are in the background or locked, so the alarm goes off when you come back to it.</div>
+      <div class="meal-item-macro" id="audio-status" style="margin-top:8px;">${audioReady() ? "Sound: ready ✓" : "Sound: not ready yet — tap Test the alarm once to turn it on."}</div>
+      <div class="meal-item-macro" style="margin-top:8px;">Keep Ledge on screen during rest (it stays awake). If you switch to your music app or lock the phone, iPhone pauses Ledge and the alarm can't go off until you come back to it.</div>
     </div>
     <div class="card">
       <h2>Plates</h2>
@@ -3078,23 +3079,71 @@ function computeTotalSeconds(cfg) {
 // iOS only lets a page make sound from an AudioContext that was created or resumed inside a
 // tap. The rest alarm fires from a timer, not a tap, so the context is created (and kept
 // awake) on every tap instead — by the time the alarm goes off it's already allowed to play.
-function unlockAudio() {
+//
+// Safari also has an "interrupted" state, which is where the context lands when another app's
+// audio takes over (music changing tracks, the lock screen's play/pause, a call). Anything
+// other than "running" gets a resume — and inside a tap, a context still stuck interrupted is
+// thrown away and rebuilt, since a fresh one made during a tap is always allowed to play.
+let audioOut = null; // compressor in front of the speakers, so the loud alarm doesn't clip
+
+function newAudioContext() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioOut = audioCtx.createDynamicsCompressor();
+  audioOut.connect(audioCtx.destination);
+}
+
+function ensureAudio(fromTap) {
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
+    if (!audioCtx || audioCtx.state === "closed") newAudioContext();
+    else if (fromTap && audioCtx.state === "interrupted") {
+      audioCtx.close().catch(() => {});
+      restKeepAlive = null;
+      newAudioContext();
+    }
+    if (audioCtx.state !== "running") audioCtx.resume().catch(() => {});
   } catch (e) { /* Web Audio unavailable */ }
+}
+
+function unlockAudio() {
+  ensureAudio(true);
+}
+
+function audioReady() {
+  return !!audioCtx && audioCtx.state === "running";
+}
+
+// While a rest is running, a silent tone keeps Ledge's audio session live, so iOS has less
+// reason to park the context before the alarm needs it. Started from the tap that logs a set.
+let restKeepAlive = null;
+
+function startRestKeepAlive() {
+  try {
+    ensureAudio(true);
+    if (restKeepAlive) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain);
+    gain.connect(audioOut);
+    osc.start();
+    restKeepAlive = osc;
+  } catch (e) { /* Web Audio unavailable */ }
+}
+
+function stopRestKeepAlive() {
+  try { if (restKeepAlive) restKeepAlive.stop(); } catch (e) { /* already stopped */ }
+  restKeepAlive = null;
 }
 
 function beep(freq, duration, volume = 0.25, wave = "sine") {
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
+    ensureAudio(false);
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.type = wave;
     osc.frequency.value = freq;
     osc.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(audioOut);
     gain.gain.setValueAtTime(volume, audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration / 1000);
     osc.start();
@@ -3163,19 +3212,20 @@ let restAlarmNoteTimeouts = [];
 let restAlarmStopSoundAt = 0;
 let restWarned = false;
 
-// Safari's audio session: "playback" is the only type that sounds with the ring/silent switch
-// on, but it also pauses whatever music is playing — so it's opt-in (Settings -> Lifting), and
-// only switched on for the alarm itself.
+// Safari's audio session. By default the alarm mixes in over your music, at whatever volume
+// the music is — and it's muted by the ring/silent switch, even through headphones. "playback"
+// is the only type that cuts through both, but it pauses the music (you hit play again after),
+// so it's opt-in (Settings -> Lifting) and only switched on for the alarm itself.
 function setAudioSession(type) {
   try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) { /* unsupported */ }
 }
 
 function alarmBurst() {
   if (state.restAlarmSound === false) return;
-  beep(988, 160, 0.7, "square");
+  beep(988, 220, 1, "square");
   restAlarmNoteTimeouts = [
-    setTimeout(() => beep(1319, 160, 0.7, "square"), 200),
-    setTimeout(() => beep(1568, 320, 0.7, "square"), 400),
+    setTimeout(() => beep(1319, 220, 1, "square"), 260),
+    setTimeout(() => beep(1568, 450, 1, "square"), 520),
   ];
   try { if (navigator.vibrate) navigator.vibrate([250, 120, 250]); } catch (e) { /* iOS has none */ }
 }
@@ -3199,6 +3249,7 @@ function startRestAlarm() {
 }
 
 function stopRestAlarm() {
+  stopRestKeepAlive();
   if (restAlarmIntervalId) { clearInterval(restAlarmIntervalId); restAlarmIntervalId = null; }
   restAlarmNoteTimeouts.forEach(clearTimeout); // a dismissal mid-burst cuts the trailing notes too
   restAlarmNoteTimeouts = [];
@@ -3222,13 +3273,14 @@ function resyncRestTimer() {
     const overdueSeconds = -restTimerRemaining;
     restTimerRemaining = 0;
     if (overdueSeconds <= REST_ALARM_MAX_SECONDS) startRestAlarm();
-    else releaseWakeLock();
+    else { stopRestKeepAlive(); releaseWakeLock(); }
   }
 }
 
 function startRestTimer(seconds) {
   if (!seconds || seconds <= 0) return;
   stopRestAlarm(); // logging the next set is the dismissal
+  startRestKeepAlive();
   restWarned = seconds <= REST_WARNING_SECONDS;
   restTimerRemaining = seconds;
   restTimerEndAt = Date.now() + seconds * 1000;
@@ -3251,7 +3303,7 @@ function startRestTimer(seconds) {
 
 function skipRestTimer() {
   if (restTimerIntervalId) { clearInterval(restTimerIntervalId); restTimerIntervalId = null; }
-  stopRestAlarm();
+  stopRestAlarm(); // also ends the keep-alive tone
   releaseWakeLock();
   restTimerRemaining = 0;
   if (currentTab === "today") render();
@@ -3494,6 +3546,7 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 // otherwise it just looks frozen until the next tick happens to land.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  ensureAudio(false); // coming back from the music app is exactly when it's been interrupted
   let needsRender = false;
   if (restTimerIntervalId) { resyncRestTimer(); needsRender = true; }
   if (stretchTimerIntervalId) { resyncStretchTimer(); needsRender = true; }
@@ -3513,7 +3566,14 @@ document.getElementById("view-root").addEventListener("click", e => {
   const action = el.dataset.action;
   const day = getOrCreateDay(viewDate);
 
-  if (action === "testRestAlarm") { startRestAlarm(); return; }
+  if (action === "testRestAlarm") {
+    startRestAlarm();
+    setTimeout(() => {
+      const status = document.getElementById("audio-status");
+      if (status) status.textContent = audioReady() ? "Sound: ready ✓" : "Sound: blocked — check the volume and silent switch, then tap Test again.";
+    }, 300);
+    return;
+  }
   if (action === "backFromSettings") {
     currentTab = tabBeforeSettings;
     render(); return;
