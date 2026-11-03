@@ -125,6 +125,7 @@ function loadState() {
       if (!parsed.exerciseNotes) parsed.exerciseNotes = {};
       if (!parsed.collapsedCards) parsed.collapsedCards = {};
       if (parsed.lastDeloadDate === undefined) parsed.lastDeloadDate = null;
+      if (!parsed.deloadWeeks) parsed.deloadWeeks = [];
       if (parsed.lastExportAt === undefined) parsed.lastExportAt = null;
       // backward compat: water used to be logged in quarter-bottles, now plain ounces;
       // bouldering sessions used to only track minutes, now also a per-climb grade log
@@ -202,6 +203,7 @@ function loadState() {
     theme: "dark",
     exerciseNotes: {},
     lastDeloadDate: null,
+    deloadWeeks: [],
     collapsedCards: {},
   };
 }
@@ -1096,10 +1098,36 @@ function sameWeight(a, b) {
 // Every past session of this lift, oldest first. Work sets are separated from lighter rows
 // by weight, so a warm-up typed into a set row doesn't read as a missed work set. `hit` is
 // judged against `scheme`; slPrescription re-judges each session against the stage it was in.
+// The planned deload week covering dateKey, if any. Past weeks are kept (not just the
+// current one) because progression is re-derived from history every time — forgetting an old
+// week would turn its light sessions back into "misses."
+function deloadWeekFor(dateKey) {
+  return (state.deloadWeeks || []).find(w => dateKey >= w.start && dateKey <= w.end) || null;
+}
+
+function startDeloadWeek() {
+  const today = formatDateKey(new Date());
+  if (deloadWeekFor(today)) return;
+  if (!state.deloadWeeks) state.deloadWeeks = [];
+  state.deloadWeeks.push({ start: today, end: addDays(today, DELOAD_WEEK_DAYS - 1) });
+  state.lastDeloadDate = today;
+}
+
+// Ending early keeps the days already in it (sessions logged so far still don't count) and
+// drops the rest; a week started today and ended today disappears entirely.
+function endDeloadWeek() {
+  const today = formatDateKey(new Date());
+  const week = deloadWeekFor(today);
+  if (!week) return;
+  if (week.start === today) state.deloadWeeks = state.deloadWeeks.filter(w => w !== week);
+  else week.end = addDays(today, -1);
+}
+
 function slSessionHistory(name, beforeKey, scheme) {
   const sessions = [];
   for (const dateKey of Object.keys(state.days).sort()) {
     if (dateKey >= beforeKey) continue;
+    if (deloadWeekFor(dateKey)) continue; // a planned easy week is neither a hit nor a miss
     const day = state.days[dateKey];
     if (day.workout.type !== "resistance") continue;
     const ex = day.workout.exercises.find(e => e.name === name);
@@ -1135,6 +1163,15 @@ function slStageScheme(base, deloads) {
 }
 
 function slPrescription(cfg, beforeKey) {
+  const p = slProgramPrescription(cfg, beforeKey);
+  const week = deloadWeekFor(beforeKey);
+  if (!week) return p;
+  const bar = BAR_WEIGHT[state.weightUnit];
+  const light = Math.max(bar, roundToStep(toDisplayWeight(p.weightKg) * DELOAD_WEEK_FACTOR, slRoundStep(), "down"));
+  return { ...p, status: "deloadWeek", normalKg: p.weightKg, weightKg: toStorageWeight(light), week };
+}
+
+function slProgramPrescription(cfg, beforeKey) {
   const base = slScheme(cfg);
   const sessions = slSessionHistory(cfg.name, beforeKey, base);
   if (!sessions.length) {
@@ -1222,6 +1259,9 @@ function slSchemeLabel(scheme) {
 function slProgressionNote(p, cfg) {
   const target = slSchemeLabel(p.scheme);
   const w = slWeight(p.weightKg);
+  if (p.status === "deloadWeek") {
+    return `Deload week (through ${niceDate(p.week.end)}): ${target} @ ${w}, ${Math.round(DELOAD_WEEK_FACTOR * 100)}% of the ${slWeight(p.normalKg)} you're due. Doesn't count toward progression — you pick up at ${slWeight(p.normalKg)} after.`;
+  }
   if (p.status === "start") {
     return `No history yet — start light at ${w} and let the program add the weight. Target ${target}.`;
   }
@@ -1572,7 +1612,9 @@ function renderStrongLiftsExerciseBlock(ex, exIdx, cfg, workout) {
       }).join("") : `<button class="btn secondary" data-action="slLoadPrescribed" data-ex="${exIdx}" style="width:100%;">Load ${slSchemeLabel(scheme)} @ ${slWeight(p.weightKg)}</button>`}
       ${ex.sets.length ? `
         <button class="btn secondary" data-action="addSet" data-ex="${exIdx}" style="width:100%;">+ Add set</button>
-        ${done.length >= scheme.sets ? `<div class="meal-item-macro" style="margin-top:6px;">${allHit
+        ${done.length >= scheme.sets ? `<div class="meal-item-macro" style="margin-top:6px;">${p.status === "deloadWeek"
+          ? `Done — deload sets don't count, so ${slWeight(p.normalKg)} is still next after the week.`
+          : allHit
           ? `${slSchemeLabel(scheme)} complete — next session goes to ${slWeight(nextUpKg)}.`
           : `Short of ${scheme.reps} reps — next session repeats ${slWeight(workWeightKg)}.`}</div>` : ""}
       ` : ""}
@@ -1632,7 +1674,7 @@ function renderWorkoutBody(day) {
   if (w.type === "resistance") {
     const routine = routineForDay(day);
     const routineHeader = isStrongLifts(routine)
-      ? renderStrongLiftsRoutinePicker(day, routine) + `<div class="meal-item-macro" style="margin-bottom:10px;"><strong>${routine.name}</strong> — every work set is the same weight; tap ✓ as you finish each set.</div>`
+      ? renderStrongLiftsRoutinePicker(day, routine) + `<div class="meal-item-macro" style="margin-bottom:10px;"><strong>${routine.name}</strong> — every work set is the same weight; tap ✓ as you finish each set.${deloadWeekFor(viewDate) ? ` <strong>Deload week</strong> — everything's at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%, take it easy.` : ""}</div>`
       : routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong></div>` : "";
     const restBanner = restTimerRemaining > 0 ? `
       <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
@@ -1907,6 +1949,10 @@ function renderStrongLiftsProgramCard() {
       ${active.length === 2
         ? `<div class="meal-item-macro">Next session: <strong>${next ? next.name : "—"}</strong></div>`
         : `<div class="meal-item-macro" style="color:var(--warn, #e0a940);">Both StrongLifts routines need to be Active for A/B to alternate — ${active.length} of 2 currently are.</div>`}
+      ${deloadWeekFor(formatDateKey(new Date()))
+        ? `<div class="meal-item-macro" style="margin:8px 0 6px;"><strong>Deload week</strong> through ${niceDate(deloadWeekFor(formatDateKey(new Date())).end)} — every lift at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%, not counted toward progression.</div>
+           <button class="btn secondary" data-action="endDeloadWeek" style="width:100%;">End the deload week early</button>`
+        : `<button class="btn secondary" data-action="markDeload" style="width:100%; margin-top:8px;">Take a deload week (7 days at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%)</button>`}
       <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:13px;">
         <input type="checkbox" data-action="slToggleShortSessions" ${state.slShortSessions ? "checked" : ""} style="width:auto; margin-top:2px;">
         <span><strong>Short sessions</strong> — squat and bench/press, then pull-ups and curls. Leaves ${STRONGLIFTS_SHORT_SKIP.slice(0, 2).join(" and ")} off A/B days (they stay in the routines).</span>
@@ -2261,14 +2307,27 @@ function weeksSinceDeload() {
   return Math.floor(days / 7);
 }
 
+function renderDeloadWeekCard() {
+  const week = deloadWeekFor(formatDateKey(new Date()));
+  if (!week) return "";
+  return `
+    <div class="card">
+      <h2>Deload week</h2>
+      <div class="meal-item-macro" style="margin-bottom:8px;">Through ${niceDate(week.end)}: every StrongLifts lift is at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%, and these sessions don't count as hits or misses. After the week each lift picks up right where it left off.</div>
+      <button class="btn secondary" data-action="endDeloadWeek" style="width:100%;">End the deload week early</button>
+    </div>
+  `;
+}
+
 function renderDeloadReminder() {
+  if (deloadWeekFor(formatDateKey(new Date()))) return renderDeloadWeekCard();
   const weeks = weeksSinceDeload();
   if (weeks < 6) return "";
   return `
     <div class="card">
       <h2>Deload check-in</h2>
       <div class="meal-item-macro" style="margin-bottom:8px;">It's been ${weeks} weeks since your last lighter week — a deload roughly every 4-8 weeks helps avoid chronic under-recovery.</div>
-      <button class="btn secondary" data-action="markDeload" style="width:100%;">Mark this week as a deload</button>
+      <button class="btn secondary" data-action="markDeload" style="width:100%;">Take a deload week (7 days at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%)</button>
     </div>
   `;
 }
@@ -3645,7 +3704,12 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "undoLastDelete") { undoLastDelete(); return; }
   if (action === "markDeload") {
-    state.lastDeloadDate = formatDateKey(new Date());
+    startDeloadWeek();
+    saveState(); render(); return; // render's resync re-prescribes today's untouched lifts
+  }
+  if (action === "endDeloadWeek") {
+    if (!confirm("End the deload week now? Today goes back to your normal weights.")) return;
+    endDeloadWeek();
     saveState(); render(); return;
   }
   if (action === "setTheme") {

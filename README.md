@@ -66,6 +66,9 @@ fixing a mistyped session (or restoring a backup) recomputes the right next weig
 of drifting. Set the weight by hand any time and the app stops second-guessing that lift
 until you start logging reps again.
 
+- **Deload week on demand.** "Take a deload week" (StrongLifts card, or the deload reminder)
+  puts every program lift at 90% for 7 days. Those sessions don't count as hits or misses, so
+  afterward each lift picks up exactly where it left off. You can end it early.
 - **Steps down when 5x5 runs out.** The first deload keeps 5x5; if the lift stalls out again
   the second deload switches it to 3x5, and the third to 3x3 — fewer sets, weight keeps climbing.
 - **Picks A or B for you.** The next workout is the one after your last *logged* session, so a

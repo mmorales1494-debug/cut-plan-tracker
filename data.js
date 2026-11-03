@@ -159,6 +159,12 @@ const STRONGLIFTS_FAILS_BEFORE_DELOAD = 3;
 // Past this, a running workout timer was almost certainly left on — ending it asks for the
 // real length instead of logging a 3-hour session (which would also inflate workout calories).
 const WORKOUT_TIMER_SANITY_MINUTES = 120;
+
+// "Mark this week as a deload": for the next 7 days every program lift is prescribed at 90%
+// of what it would have been. Sessions logged inside the week don't count as hits or misses,
+// so afterward each lift picks up exactly where it left off.
+const DELOAD_WEEK_DAYS = 7;
+const DELOAD_WEEK_FACTOR = 0.9;
 const STRONGLIFTS_DELOAD_FACTOR = 0.9; // cut 10% and climb back with better form/bar speed
 
 // Default rest between work sets, scaled by how the last set went — reps short of target is
