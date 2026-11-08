@@ -859,3 +859,20 @@ table.hist-table th { color: var(--text); font-weight: 600; }
 }
 .rest-dock-actions { display: flex; gap: 8px; }
 .rest-dock-actions .btn { padding: 10px 14px; min-width: 64px; }
+
+/* "Have extra time?" suggestions */
+.extra-panel {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.extra-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.extra-pick .btn { flex-shrink: 0; min-width: 64px; }

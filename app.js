@@ -111,6 +111,7 @@ function loadState() {
       if (!parsed.restTimes) parsed.restTimes = { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS };
       if (parsed.liftingOnly === undefined) parsed.liftingOnly = false;
       if (!parsed.platePairs) parsed.platePairs = JSON.parse(JSON.stringify(DEFAULT_PLATE_PAIRS));
+      if (!parsed.equipment) parsed.equipment = { ...DEFAULT_EQUIPMENT };
       // one-time addition: rotator cuff work wasn't in any routine before — add it if missing
       // (still just a normal exercise afterward, remove it in Workout Routines if not wanted).
       // StrongLifts routines are left alone — the program is the five lifts, nothing else.
@@ -207,6 +208,7 @@ function loadState() {
     restTimes: { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS },
     liftingOnly: false,
     platePairs: JSON.parse(JSON.stringify(DEFAULT_PLATE_PAIRS)),
+    equipment: { ...DEFAULT_EQUIPMENT },
     customPresets: [],
     goal: null,
     itemUsage: {},
@@ -599,6 +601,7 @@ function renderMealSwipeCard(day) {
 let quickAddOpen = false;
 let editDefaultsOpen = false;
 let quickAddExerciseOpen = false;
+let extraPanelOpen = false;
 let quickAddCoreOpen = false;
 let swapExerciseIndex = null; // index in day.workout.exercises currently showing the swap picker, or null
 let foodPickerOpen = false;
@@ -1409,9 +1412,9 @@ function slResyncDayRoutine(day, dateKey) {
   const next = nextRoutineFor(dateKey, pool);
   if (!next) return false;
   const want = routineExercisesForDay(next).map(e => e.name).join("|");
-  const have = day.workout.exercises.filter(e => !e.quickAdd).map(e => e.name).join("|");
+  const have = day.workout.exercises.filter(e => !e.quickAdd && !e.extra).map(e => e.name).join("|");
   if (next.id === current.id && want === have) return false;
-  const quickAdds = day.workout.exercises.filter(e => e.quickAdd);
+  const quickAdds = day.workout.exercises.filter(e => e.quickAdd || e.extra);
   setDayRoutine(day, next, dateKey);
   day.workout.exercises.push(...quickAdds);
   saveState();
@@ -1653,12 +1656,15 @@ function renderAccessoryBlock(ex, exIdx, cfg) {
   const last = lastSessionFor(ex.name, viewDate);
   const sub = cfg.backoff
     ? `${Math.round(cfg.backoff.pct * 100)}% of your ${cfg.backoff.of} work weight — extra practice, doesn't count toward progression.`
-    : last ? `Last: ${acc.bodyweight && !last.weight ? "bodyweight" : formatKgLb(last.weight)} × ${last.reps} (${niceDate(last.dateKey)}) — filled in below.` : `Target ${acc.sets}×${acc.reps}.`;
+    : last ? `Last: ${acc.bodyweight && !last.weight ? "bodyweight" : formatKgLb(last.weight)} × ${last.reps}${cfg.perSide ? " each side" : ""} (${niceDate(last.dateKey)}) — filled in below.` : `Target ${acc.sets}×${acc.reps}${cfg.perSide ? " each side" : ""} — pick a weight you can do with a couple of reps to spare.`;
   return `
     <div class="exercise-block">
       <div class="row">
-        <h3 style="margin:0;">${ex.name} <span class="recurring-tag">${cfg.optional ? "optional" : "accessory"}</span></h3>
-        <span class="meal-item-macro">${done}/${ex.sets.length}</span>
+        <h3 style="margin:0;">${ex.name} <span class="recurring-tag">${cfg.extra ? "extra" : cfg.optional ? "optional" : "accessory"}</span></h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span class="meal-item-macro">${done}/${ex.sets.length}</span>
+          ${cfg.extra ? `<button class="icon-btn" data-action="removeExtra" data-ex="${exIdx}" aria-label="Remove">✕</button>` : ""}
+        </div>
       </div>
       <div class="meal-item-macro" style="margin:6px 0 8px;">${sub}${cfg.optional ? " Skip it when you're short on time." : ""}</div>
       ${ex.sets.map((s, sIdx) => {
@@ -1668,13 +1674,116 @@ function renderAccessoryBlock(ex, exIdx, cfg) {
         <div class="set-row-flex">
           <div class="set-num">${sIdx + 1}</div>
           <input type="number" inputmode="decimal" placeholder="${acc.bodyweight ? "BW" : state.weightUnit}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${toDisplayWeight(s.weight)}">
-          <input type="number" inputmode="numeric" placeholder="${target} reps" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
+          <input type="number" inputmode="numeric" placeholder="${target}${cfg.perSide ? "/side" : " reps"}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
           <button class="btn ${reps ? "" : "secondary"}" data-action="accLogSet" data-ex="${exIdx}" data-set="${sIdx}" style="min-width:58px; padding:8px 10px;">✓ ${reps || target}</button>
           <button class="remove-set" data-action="removeSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
         </div>
         ${ex.barbell && s.weight ? `<div data-plate-for="${exIdx}-${sIdx}">${renderPlateCalc(s.weight)}</div>` : ""}`;
       }).join("")}
       <button class="btn secondary" data-action="addSet" data-ex="${exIdx}" style="width:100%;">+ Add set</button>
+    </div>
+  `;
+}
+
+// ---------- "Have extra time?" ----------
+
+// Config for an add-on picked from the suggestions, shaped like a routine accessory so it
+// renders and logs the same way (pre-filled from last time, one tap per set).
+function extraConfig(name) {
+  const x = EXTRA_EXERCISES.find(e => e.name === name);
+  if (!x) return null;
+  return { name, extra: true, perSide: !!x.perSide, accessory: { sets: x.sets, reps: x.reps } };
+}
+
+// The accessory config for an exercise on the day: an add-on, a routine accessory, or none.
+function accessoryConfigFor(routine, ex) {
+  if (ex.extra) return extraConfig(ex.name);
+  if (ex.quickAdd) return null;
+  return slAccessoryConfig(routine, ex.name);
+}
+
+// Sets per muscle group over the last two weeks through dateKey (today's logged sets
+// included): a primary muscle counts each set once, a secondary one half. Core work logged on
+// run days counts too.
+function recentMuscleVolume(dateKey) {
+  const from = addDays(dateKey, -(EXTRA_LOOKBACK_DAYS - 1));
+  const vol = {};
+  const add = (name, sets) => {
+    const m = MUSCLE_MAP[name];
+    if (!m || !sets) return;
+    m.p.forEach(t => { vol[t] = (vol[t] || 0) + sets; });
+    m.s.forEach(t => { vol[t] = (vol[t] || 0) + sets / 2; });
+  };
+  for (const [key, d] of Object.entries(state.days)) {
+    if (key < from || key > dateKey || !d.workout) continue;
+    if (d.workout.type === "resistance") d.workout.exercises.forEach(ex => add(ex.name, loggedSets(ex).length));
+    (d.workout.core || []).forEach(ex => {
+      const n = (ex.sets || []).filter(st => Object.values(st).some(v => v !== "" && v != null)).length;
+      vol.core = (vol.core || 0) + n;
+    });
+  }
+  return vol;
+}
+
+function ownsEquipment(id) {
+  const eq = state.equipment || DEFAULT_EQUIPMENT;
+  return !!eq[id];
+}
+
+// Ranked add-ons for the day: the muscle groups furthest below their two-week target first,
+// one suggestion per group, only with equipment you own and not already on the day. Within a
+// group, the one you did least recently comes first, so they rotate.
+// Every muscle group that's below target, each with the one add-on to do for it: of the
+// options you own that aren't already on the day, the one done least recently (never-done
+// first), so a group's options rotate session to session.
+function extraCandidatesByGroup(day, dateKey) {
+  const vol = recentMuscleVolume(dateKey);
+  const onDay = new Set(day.workout.exercises.map(e => e.name));
+  const lastDone = name => {
+    const last = lastSessionFor(name, addDays(dateKey, 1));
+    return last ? last.dateKey : "";
+  };
+  const groups = [];
+  EXTRA_EXERCISES.forEach((x, priority) => {
+    if (!ownsEquipment(x.needs) || onDay.has(x.name)) return;
+    const group = MUSCLE_MAP[x.name].p[0];
+    const target = EXTRA_VOLUME_TARGETS[group] || 10;
+    const done = vol[group] || 0;
+    if (done >= target) return;
+    const pick = { ...x, group, target, done: Math.round(done), need: (target - done) / target, priority, lastDone: lastDone(x.name) };
+    const existing = groups.find(g => g.group === group);
+    if (!existing) groups.push(pick);
+    else if (pick.lastDone < existing.lastDone) groups[groups.indexOf(existing)] = { ...pick, priority: existing.priority };
+  });
+  return groups;
+}
+
+// Ranked add-ons for the day: the groups furthest below their two-week target first (ties go
+// to catalog order), one suggestion per group.
+function extraSuggestions(day, dateKey) {
+  return extraCandidatesByGroup(day, dateKey)
+    .sort((a, b) => b.need - a.need || a.priority - b.priority)
+    .slice(0, EXTRA_SUGGESTION_COUNT);
+}
+
+function renderExtraPanel(day) {
+  if (!extraPanelOpen) {
+    return `<button class="btn secondary extra-toggle" data-action="toggleExtraPanel" style="width:100%; margin-top:8px;">⏱ Have extra time? Suggest something</button>`;
+  }
+  const picks = extraSuggestions(day, viewDate);
+  return `
+    <div class="extra-panel">
+      <div class="row"><h3 style="margin:0;">Have extra time?</h3><button class="icon-btn" data-action="toggleExtraPanel" aria-label="Close">✕</button></div>
+      <div class="meal-item-macro" style="margin:4px 0 10px;">Picked from your last ${EXTRA_LOOKBACK_DAYS} days — whatever's furthest behind, using the equipment in Settings.</div>
+      ${picks.length ? picks.map(x => `
+        <div class="extra-pick">
+          <div style="flex:1; min-width:0;">
+            <div class="meal-item-label">${x.name} <span class="recurring-tag">${x.sets}×${x.reps}${x.perSide ? "/side" : ""} · ~${x.minutes} min</span></div>
+            <div class="meal-item-macro">${EXTRA_REASONS[x.group] || ""} — ${x.done} set${x.done === 1 ? "" : "s"} in ${EXTRA_LOOKBACK_DAYS} days, aim ~${x.target}.</div>
+          </div>
+          <button class="btn" data-action="addExtra" data-name="${x.name}">Add</button>
+        </div>
+      `).join("") : `<div class="empty-state">Nothing's behind right now — you're covered. Go home early.</div>`}
     </div>
   `;
 }
@@ -1701,7 +1810,7 @@ function renderWorkoutBody(day) {
     return renderWorkoutTimerControl(day) + routineHeader + w.exercises.map((ex, exIdx) => {
       const slCfg = ex.quickAdd ? null : strongLiftsConfig(routine, ex.name);
       if (slCfg) return renderStrongLiftsExerciseBlock(ex, exIdx, slCfg, w);
-      const accCfg = ex.quickAdd ? null : slAccessoryConfig(routine, ex.name);
+      const accCfg = accessoryConfigFor(routine, ex);
       if (accCfg) return renderAccessoryBlock(ex, exIdx, accCfg);
       const last = lastSessionFor(ex.name, viewDate);
       const lastFullSets = lastFullSessionSets(ex.name, viewDate);
@@ -1739,7 +1848,7 @@ function renderWorkoutBody(day) {
         ${lastFullSets ? `<button class="btn secondary" data-action="fillFromLastSession" data-ex="${exIdx}" style="width:100%; margin-top:8px;">Fill from last session (${lastFullSets.length} set${lastFullSets.length === 1 ? "" : "s"})</button>` : ""}
       </div>
     `;
-    }).join("") + `
+    }).join("") + renderExtraPanel(day) + `
       <div style="margin-top:8px;">
         <button class="btn secondary" data-action="toggleQuickAddExercise" style="width:100%;">${quickAddExerciseOpen ? "Cancel" : "+ Quick add an exercise (one-time)"}</button>
         ${quickAddExerciseOpen ? `
@@ -2410,6 +2519,16 @@ function renderSettings() {
       <button class="btn secondary" data-action="testRestAlarm" style="width:100%; margin-top:10px;">Test the alarm</button>
       <div class="meal-item-macro" id="audio-status" style="margin-top:8px;">${audioReady() ? "Sound: ready ✓" : "Sound: not ready yet — tap Test the alarm once to turn it on."}</div>
       <div class="meal-item-macro" style="margin-top:8px;">Keep Ledge on screen during rest (it stays awake). If you switch to your music app or lock the phone, iPhone pauses Ledge and the alarm can't go off until you come back to it.</div>
+    </div>
+    <div class="card">
+      <h2>Equipment</h2>
+      <div class="meal-item-macro" style="margin-bottom:4px;">What you have at home — "Have extra time?" only suggests things you can do with these.</div>
+      ${EQUIPMENT_OPTIONS.map(o => `
+        <label class="check-row">
+          <input type="checkbox" data-action="toggleEquipment" data-id="${o.id}" ${ownsEquipment(o.id) ? "checked" : ""}>
+          <span>${o.label}</span>
+        </label>
+      `).join("")}
     </div>
     <div class="card">
       <h2>Plates</h2>
@@ -3949,16 +4068,35 @@ document.getElementById("view-root").addEventListener("click", e => {
     const routine = state.routines.find(r => r.id === el.dataset.routine);
     if (!routine || routine.id === day.workout.routineId) return;
     if (dayHasLoggedSets(day) && !confirm(`Switch to ${routine.name}? The sets logged so far on this day will be cleared.`)) return;
-    const quickAdds = day.workout.exercises.filter(e => e.quickAdd);
+    const quickAdds = day.workout.exercises.filter(e => e.quickAdd || e.extra);
     setDayRoutine(day, routine, viewDate);
     day.workout.exercises.push(...quickAdds);
     day.workout.routinePinned = true;
     saveState(); render(); return;
   }
+  if (action === "toggleExtraPanel") {
+    extraPanelOpen = !extraPanelOpen;
+    render(); return;
+  }
+  if (action === "addExtra") {
+    const cfg = extraConfig(el.dataset.name);
+    if (!cfg) return;
+    day.workout.exercises.push({ name: cfg.name, barbell: false, sets: slAccessoryRows(cfg, viewDate), extra: true });
+    day.workout.routinePinned = true;
+    saveState(); render(); return;
+  }
+  if (action === "removeExtra") {
+    const exIdx = Number(el.dataset.ex);
+    const removed = day.workout.exercises[exIdx];
+    if (loggedSets(removed).length && !confirm(`Remove ${removed.name}? Its logged sets go too.`)) return;
+    day.workout.exercises.splice(exIdx, 1);
+    recordUndo(`${removed.name} removed`, () => { day.workout.exercises.splice(exIdx, 0, removed); });
+    saveState(); render(); return;
+  }
   if (action === "accLogSet") {
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     const set = ex.sets[Number(el.dataset.set)];
-    const cfg = slAccessoryConfig(routineForDay(day), ex.name);
+    const cfg = accessoryConfigFor(routineForDay(day), ex);
     const target = Number(set.target) || (cfg ? cfg.accessory.reps : 0);
     const wasDone = Number(set.reps) > 0;
     set.reps = wasDone ? "" : target;
@@ -4465,7 +4603,7 @@ document.getElementById("view-root").addEventListener("change", e => {
     const routine = routineForDay(day);
     const ex = day.workout.exercises[Number(el.dataset.ex)];
     const slCfg = ex && !ex.quickAdd ? strongLiftsConfig(routine, ex.name) : null;
-    const accCfg = ex && !ex.quickAdd ? slAccessoryConfig(routine, ex.name) : null;
+    const accCfg = ex ? accessoryConfigFor(routine, ex) : null;
     startRestTimer(slCfg
       ? slRestSeconds(el.value, slScheme(slCfg).reps)
       : accCfg ? ACCESSORY_REST_SECONDS
@@ -4491,6 +4629,10 @@ document.getElementById("view-root").addEventListener("change", e => {
     const minutes = Number(el.value);
     if (!(minutes > 0)) return;
     state.restTimes = { ...restTimes(), [el.dataset.kind]: Math.round(minutes * 60) };
+    saveState(); return;
+  }
+  if (action === "toggleEquipment") {
+    state.equipment = { ...(state.equipment || DEFAULT_EQUIPMENT), [el.dataset.id]: el.checked };
     saveState(); return;
   }
   if (action === "toggleRestAlarmSound") { state.restAlarmSound = el.checked; saveState(); return; }

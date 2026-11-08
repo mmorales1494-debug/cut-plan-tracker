@@ -225,6 +225,77 @@ const STRONGLIFTS_TEMPLATE = {
   ],
 };
 
+// ---------- "Have extra time?" ----------
+
+// What you own, so suggestions only pick things you can actually do. Editable in Settings.
+const EQUIPMENT_OPTIONS = [
+  { id: "dumbbells", label: "Dumbbells" },
+  { id: "ezBar", label: "EZ curl bar" },
+  { id: "cable", label: "Cable / pulley" },
+  { id: "pullupBar", label: "Pull-up bar" },
+  { id: "bands", label: "Resistance bands" },
+];
+const DEFAULT_EQUIPMENT = { dumbbells: true, ezBar: true, cable: true, pullupBar: true, bands: false };
+
+// Muscle groups each lift works: p = primary (a set counts 1), s = secondary (counts 0.5).
+// Feeds the two-week volume picture the suggestions are ranked from.
+const MUSCLE_MAP = {
+  "Squat": { p: ["quads"], s: ["glutes"] },
+  "Bench Press": { p: ["chest"], s: ["triceps", "frontDelts"] },
+  "Bench Press (light)": { p: ["chest"], s: ["triceps"] },
+  "Overhead Press": { p: ["frontDelts"], s: ["triceps"] },
+  "Deadlift": { p: ["hinge"], s: ["back", "glutes", "grip"] },
+  "Barbell Row": { p: ["back"], s: ["rearDelts", "biceps"] },
+  "Pull-Up": { p: ["back"], s: ["biceps", "grip"] },
+  "Bicep Curl (Dumbbell)": { p: ["biceps"], s: [] },
+  "Band External Rotation": { p: ["rotatorCuff"], s: ["rearDelts"] },
+  "Face Pull": { p: ["rearDelts"], s: ["rotatorCuff"] },
+  "Skull Crusher (EZ Bar)": { p: ["triceps"], s: [] },
+  "Tricep Pushdown": { p: ["triceps"], s: [] },
+  "Tricep Kickback (Dumbbell)": { p: ["triceps"], s: [] },
+  "Seated Cable Row": { p: ["back"], s: ["rearDelts", "biceps"] },
+  "Hammer Curl": { p: ["biceps"], s: ["grip"] },
+  "Pallof Press": { p: ["core"], s: [] },
+  "Cable Crunch": { p: ["core"], s: [] },
+  "Lateral Raise": { p: ["sideDelts"], s: [] },
+};
+
+// How many sets per muscle group over two weeks is "enough" for a short-session lifter —
+// deliberately modest. Suggestions go to whatever is furthest below its number.
+const EXTRA_VOLUME_TARGETS = {
+  rearDelts: 12, triceps: 14, core: 12, back: 20, biceps: 12, sideDelts: 8, grip: 8, rotatorCuff: 6,
+};
+// Why each group matters for you — the line shown under a suggestion.
+const EXTRA_REASONS = {
+  rearDelts: "Balances all the pressing — rear delts and rotator cuff keep shoulders healthy",
+  rotatorCuff: "Shoulder health with this much benching and pressing",
+  triceps: "Triceps lock out your bench and press — the top half of the road to 225",
+  core: "No direct core work lately — bracing carries straight into squats and deadlifts",
+  back: "More pulling to balance the pressing",
+  biceps: "Extra arm work",
+  sideDelts: "Shoulder width; not hit by the main lifts",
+  grip: "Grip holds your deadlift (and your climbing, when it's back)",
+};
+
+// The add-ons, in priority order — when two muscle groups are equally far behind, the one
+// listed first wins (face pulls ahead of lateral raises). sets x reps are where to start with
+// no history; after that they open at whatever you did last time. perSide shows "each side".
+// Squats and presses brace the core but don't count toward it: "core" means direct work.
+const EXTRA_EXERCISES = [
+  { name: "Face Pull", needs: "cable", sets: 3, reps: 15, minutes: 5 },
+  { name: "Skull Crusher (EZ Bar)", needs: "ezBar", sets: 3, reps: 10, minutes: 6 },
+  { name: "Tricep Pushdown", needs: "cable", sets: 3, reps: 12, minutes: 5 },
+  { name: "Tricep Kickback (Dumbbell)", needs: "dumbbells", sets: 3, reps: 12, minutes: 5, perSide: true },
+  { name: "Pallof Press", needs: "cable", sets: 3, reps: 10, minutes: 5, perSide: true },
+  { name: "Cable Crunch", needs: "cable", sets: 3, reps: 15, minutes: 4 },
+  { name: "Seated Cable Row", needs: "cable", sets: 3, reps: 10, minutes: 6 },
+  { name: "Hammer Curl", needs: "dumbbells", sets: 3, reps: 10, minutes: 5 },
+  { name: "Lateral Raise", needs: "dumbbells", sets: 3, reps: 12, minutes: 5 },
+  { name: "Band External Rotation", needs: "bands", sets: 2, reps: 15, minutes: 3, perSide: true },
+];
+const EXTRA_SUGGESTION_COUNT = 3;
+const EXTRA_LOOKBACK_DAYS = 14;
+
 // "Short sessions" leaves these out of A/B days — squat, one press, deadlift on B, then
 // pull-ups and curls. Rows are covered by the pull-ups. They stay in the routine, one toggle away.
 const STRONGLIFTS_SHORT_SKIP = ["Barbell Row", "Band External Rotation"];

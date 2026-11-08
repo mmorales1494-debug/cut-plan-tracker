@@ -85,6 +85,13 @@ until you start logging reps again.
   the plates you own (**Settings → Plates**, counted in pairs). It warns when a weight can't be
   made exactly.
 
+**Have extra time?** at the bottom of a lifting day suggests up to three add-ons — face
+pulls, triceps (skull crushers, pushdowns, kickbacks), core (Pallof press, cable crunch), cable
+rows, curls, lateral raises — picked from whichever muscle groups are furthest behind over the
+last two weeks, using only the gear checked in **Settings → Equipment**. Each comes with the
+reason; added ones open pre-filled from last time with one-tap logging, and never affect the
+program's progression.
+
 Sets, reps and the jump per session are editable per lift in **Workout routines**, and any
 extra exercise you add to an A or B day is treated as a normal accessory, outside the
 program.
