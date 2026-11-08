@@ -95,9 +95,14 @@ html, body {
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
-#bottom-nav {
+/* Rest timer dock + tabs travel together, pinned to the bottom of the screen. */
+#bottom-bar {
   position: sticky;
   bottom: 0;
+  z-index: 50;
+}
+
+#bottom-nav {
   display: flex;
   background: var(--surface);
   border-top: 1px solid var(--border);
@@ -823,3 +828,34 @@ table.hist-table th { color: var(--text); font-weight: 600; }
   font-size: 13px;
   line-height: 1.4;
 }
+
+/* Rest timer dock: sits on top of the bottom tabs while a rest is running. */
+#rest-dock {
+  background: var(--surface-2);
+  border-top: 1px solid var(--accent);
+}
+#rest-dock[hidden] { display: none; }
+.rest-dock-bar { height: 3px; background: var(--border); }
+.rest-dock-fill { height: 100%; background: var(--accent); transition: width 1s linear; }
+.rest-dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+}
+.rest-dock-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.rest-dock-clock {
+  font-size: 30px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--accent);
+}
+.rest-dock-actions { display: flex; gap: 8px; }
+.rest-dock-actions .btn { padding: 10px 14px; min-width: 64px; }

@@ -522,6 +522,7 @@ function render() {
     </div>
   ` : "";
   root.innerHTML = undoBanner + html;
+  renderRestDock();
 
   if (currentTab === "progress") hydrateProgress();
 }
@@ -1676,14 +1677,7 @@ function renderWorkoutBody(day) {
     const routineHeader = isStrongLifts(routine)
       ? renderStrongLiftsRoutinePicker(day, routine) + `<div class="meal-item-macro" style="margin-bottom:10px;"><strong>${routine.name}</strong> — every work set is the same weight; tap ✓ as you finish each set.${deloadWeekFor(viewDate) ? ` <strong>Deload week</strong> — everything's at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%, take it easy.` : ""}</div>`
       : routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong></div>` : "";
-    const restBanner = restTimerRemaining > 0 ? `
-      <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
-        <div class="timer-phase">Resting</div>
-        <div class="timer-clock" id="rest-timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
-        <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
-      </div>
-    ` : "";
-    return renderWorkoutTimerControl(day) + restBanner + routineHeader + w.exercises.map((ex, exIdx) => {
+    return renderWorkoutTimerControl(day) + routineHeader + w.exercises.map((ex, exIdx) => {
       const slCfg = ex.quickAdd ? null : strongLiftsConfig(routine, ex.name);
       if (slCfg) return renderStrongLiftsExerciseBlock(ex, exIdx, slCfg, w);
       const accCfg = ex.quickAdd ? null : slAccessoryConfig(routine, ex.name);
@@ -1748,13 +1742,6 @@ function renderWorkoutBody(day) {
     `;
   }
   if (w.type === "run") {
-    const restBanner = restTimerRemaining > 0 ? `
-      <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
-        <div class="timer-phase">Resting</div>
-        <div class="timer-clock" id="rest-timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
-        <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
-      </div>
-    ` : "";
     return `
       <div class="two-col">
         <div class="field"><label>Miles</label><input type="number" inputmode="decimal" step="0.1" data-action="setRunField" data-field="miles" value="${w.run.miles}"></div>
@@ -1762,7 +1749,6 @@ function renderWorkoutBody(day) {
       </div>
       <h3 style="margin-top:16px; margin-bottom:4px;">Core work</h3>
       <div class="meal-item-macro" style="margin-bottom:10px;">10-15 min total, progressive — add reps/time/weight weekly</div>
-      ${restBanner}
       ${w.core.map((ex, exIdx) => renderCoreExerciseBlock(ex, exIdx)).join("")}
       <div style="margin-top:8px;">
         <button class="btn secondary" data-action="toggleQuickAddCore" style="width:100%;">${quickAddCoreOpen ? "Cancel" : "+ Quick add a core exercise (one-time)"}</button>
@@ -1788,13 +1774,6 @@ function renderWorkoutBody(day) {
     const climbs = w.boulder.climbs;
     const tally = CLIMBING_GRADES.map(g => ({ grade: g, count: climbs.filter(c => c.grade === g).length })).filter(t => t.count > 0);
     const warmupDone = w.boulder.warmupDone;
-    const restBanner = restTimerRemaining > 0 ? `
-      <div class="timer-display rest" style="padding:12px 0; margin-bottom:12px;">
-        <div class="timer-phase">Resting</div>
-        <div class="timer-clock" id="rest-timer-clock" style="font-size:32px;">${formatMMSS(restTimerRemaining)}</div>
-        <button class="btn secondary" data-action="skipRestTimer" style="margin-top:8px;">Skip</button>
-      </div>
-    ` : "";
     const warmupChecklist = `
       <h3 style="margin-bottom:8px;">Warm-up</h3>
       ${CLIMBING_WARMUP_STEPS.map((step, i) => `
@@ -1807,7 +1786,6 @@ function renderWorkoutBody(day) {
     return `
       ${renderWorkoutTimerControl(day)}
       ${warmupChecklist}
-      ${restBanner}
       ${renderClimbingPhaseNote(day)}
       <div class="field">
         <label>Session type</label>
@@ -3342,22 +3320,51 @@ function startRestTimer(seconds) {
   startRestKeepAlive();
   restWarned = seconds <= REST_WARNING_SECONDS;
   restTimerRemaining = seconds;
+  restTimerTotal = seconds;
   restTimerEndAt = Date.now() + seconds * 1000;
   requestWakeLock();
   if (restTimerIntervalId) clearInterval(restTimerIntervalId);
+  // Only the dock updates each tick — never a full re-render, so typing in a field on the
+  // page doesn't lose focus every second.
   restTimerIntervalId = setInterval(() => {
     resyncRestTimer();
-    if (restTimerRemaining <= 0) {
-      // Finished — a real render is needed to remove the banner from the page.
-      if (currentTab === "today") render();
-    } else {
-      // Just patch the clock text every second instead of a full re-render, so typing
-      // in any other field on the page doesn't get its focus wiped out every tick.
-      const clockEl = document.getElementById("rest-timer-clock");
-      if (clockEl) clockEl.textContent = formatMMSS(restTimerRemaining);
-    }
+    renderRestDock();
   }, 1000);
-  if (currentTab === "today") render();
+  renderRestDock();
+}
+
+// The rest timer lives in a dock pinned just above the bottom tabs rather than at the top of
+// the workout, so it's in view wherever you've scrolled to — next to the set you just logged.
+// It sits outside view-root, so re-renders don't touch it; this keeps it in sync instead.
+let restTimerTotal = 0;
+
+function renderRestDock() {
+  const dock = document.getElementById("rest-dock");
+  if (!dock) return;
+  if (!(restTimerRemaining > 0)) { dock.hidden = true; return; }
+  if (dock.hidden || !dock.firstChild) {
+    dock.innerHTML = `
+      <div class="rest-dock-bar"><div class="rest-dock-fill" id="rest-dock-fill"></div></div>
+      <div class="rest-dock-row">
+        <div><div class="rest-dock-label">Resting</div><div class="rest-dock-clock" id="rest-timer-clock"></div></div>
+        <div class="rest-dock-actions">
+          <button class="btn secondary" data-dock="add30">+30s</button>
+          <button class="btn secondary" data-dock="skip">Skip</button>
+        </div>
+      </div>`;
+    dock.hidden = false;
+  }
+  document.getElementById("rest-timer-clock").textContent = formatMMSS(restTimerRemaining);
+  const pct = restTimerTotal ? Math.max(0, Math.min(1, restTimerRemaining / restTimerTotal)) : 0;
+  document.getElementById("rest-dock-fill").style.width = `${pct * 100}%`;
+}
+
+function addRestTime(seconds) {
+  if (!restTimerIntervalId) return;
+  restTimerEndAt += seconds * 1000;
+  restTimerTotal += seconds;
+  resyncRestTimer();
+  renderRestDock();
 }
 
 function skipRestTimer() {
@@ -3365,7 +3372,7 @@ function skipRestTimer() {
   stopRestAlarm(); // also ends the keep-alive tone
   releaseWakeLock();
   restTimerRemaining = 0;
-  if (currentTab === "today") render();
+  renderRestDock();
 }
 
 function startTimer() {
@@ -3617,6 +3624,13 @@ document.addEventListener("visibilitychange", () => {
 
 // Any tap anywhere keeps the audio context unlocked for the rest alarm (see unlockAudio).
 document.addEventListener("click", unlockAudio, true);
+
+document.getElementById("rest-dock").addEventListener("click", e => {
+  const btn = e.target.closest("[data-dock]");
+  if (!btn) return;
+  if (btn.dataset.dock === "add30") addRestTime(30);
+  else skipRestTimer();
+});
 document.addEventListener("touchend", unlockAudio, true);
 
 document.getElementById("view-root").addEventListener("click", e => {
