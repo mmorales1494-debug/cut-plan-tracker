@@ -194,11 +194,12 @@ const STRONGLIFTS_WARMUP_RAMP = [
   { pct: 0.9, reps: 2 },
 ];
 
-// scheme = work sets x reps (deadlift is 1x5 — five hard pulls from a dead stop is already
-// the whole stimulus, and 5x5 deadlifts wreck recovery for the squats three days later).
+// scheme = work sets x reps. Deadlift is 3x5: more practice than the classic 1x5 while
+// coming back to the lift, still well short of 5x5, which wrecks recovery for the next squats.
 // increment = weight added after a session where every work set hit its reps; deadlift
 // climbs twice as fast since it starts heavier and recovers faster.
-// start = where the program says to begin a lift with no history yet.
+// start = where to begin a lift with no history yet. Deadlift starts at 135 — a 45 on each
+// side is what puts the bar at proper pulling height off the floor.
 // fromFloor skips the empty-bar warm-up sets — a loaded bar on the floor is already at
 // pulling height, an empty one isn't.
 //
@@ -217,16 +218,16 @@ const STRONGLIFTS_TEMPLATE = {
   B: [
     { name: "Squat", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
     { name: "Overhead Press", barbell: true, scheme: { sets: 5, reps: 5 }, increment: { lb: 5, kg: 2.5 }, start: { lb: 45, kg: 20 } },
-    { name: "Deadlift", barbell: true, scheme: { sets: 1, reps: 5 }, increment: { lb: 10, kg: 5 }, start: { lb: 95, kg: 40 }, fromFloor: true },
+    { name: "Deadlift", barbell: true, scheme: { sets: 3, reps: 5 }, increment: { lb: 10, kg: 5 }, start: { lb: 135, kg: 60 }, fromFloor: true },
     { name: "Bench Press (light)", barbell: true, optional: true, accessory: { sets: 2, reps: 8 }, backoff: { of: "Bench Press", pct: 0.8 } },
     { name: "Pull-Up", barbell: false, accessory: { sets: 3, reps: 8, bodyweight: true } },
     { name: "Bicep Curl (Dumbbell)", barbell: false, accessory: { sets: 3, reps: 10 } },
   ],
 };
 
-// "Short sessions" leaves these out of A/B days — for when there's time for the squat and
-// one press, then pull-ups and curls, and that's it. They stay in the routine, one toggle away.
-const STRONGLIFTS_SHORT_SKIP = ["Barbell Row", "Deadlift", "Band External Rotation"];
+// "Short sessions" leaves these out of A/B days — squat, one press, deadlift on B, then
+// pull-ups and curls. Rows are covered by the pull-ups. They stay in the routine, one toggle away.
+const STRONGLIFTS_SHORT_SKIP = ["Barbell Row", "Band External Rotation"];
 
 // What happens after repeated deloads on the same lift: the first deload just cuts 10% and
 // stays 5x5; the second drops to 3x5; the third and later to 3x3. Fewer, heavier-feeling

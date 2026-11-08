@@ -95,6 +95,18 @@ function loadState() {
         });
         parsed.slLayoutVersion = 2;
       }
+      // Layout v3: deadlift back on short-session B days as 3x5 from 135 lb (it was a 1x5 from
+      // 95 that short sessions left off). Only changes a deadlift still on the old defaults.
+      if (parsed.slLayoutVersion < 3) {
+        parsed.routines.forEach(r => {
+          if (r.program !== STRONGLIFTS_PROGRAM) return;
+          const dl = r.exercises.find(e => e.name === "Deadlift" && e.scheme);
+          if (!dl) return;
+          if (dl.scheme.sets === 1 && dl.scheme.reps === 5) dl.scheme = { sets: 3, reps: 5 };
+          if (!dl.start || dl.start.lb === 95) dl.start = { lb: 135, kg: 60 };
+        });
+        parsed.slLayoutVersion = 3;
+      }
       if (parsed.slShortSessions === undefined) parsed.slShortSessions = true;
       if (!parsed.restTimes) parsed.restTimes = { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS };
       if (parsed.liftingOnly === undefined) parsed.liftingOnly = false;
@@ -190,7 +202,7 @@ function loadState() {
     weightUnit: "kg",
     routines: [defaultRoutine()],
     nextRoutineIndex: 0,
-    slLayoutVersion: 2,
+    slLayoutVersion: 3,
     slShortSessions: true,
     restTimes: { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS },
     liftingOnly: false,
@@ -1226,10 +1238,19 @@ function slWarmupSets(workingKg, cfg) {
     }
     const w = roundToStep(working * r.pct, step);
     if (w <= bar || w >= working) continue;
+    if (cfg.fromFloor && w < floorHeightLoad()) continue; // bar would sit too low to pull from
     if (rows.length && rows[rows.length - 1].weight === w) continue;
     rows.push({ weight: w, reps: r.reps });
   }
+  // A pull that's past 135 but whose ramp all fell below it still gets one set at 135.
+  if (cfg.fromFloor && !rows.length && working > floorHeightLoad()) rows.push({ weight: floorHeightLoad(), reps: 5 });
   return rows;
+}
+
+// The lightest load that puts the bar at standard pulling height: the bar plus a 45 lb (20 kg)
+// plate a side. Anything lighter on smaller plates sits too low off the floor.
+function floorHeightLoad() {
+  return state.weightUnit === "kg" ? 60 : 135;
 }
 
 function restTimes() {
@@ -1933,7 +1954,7 @@ function renderStrongLiftsProgramCard() {
         : `<button class="btn secondary" data-action="markDeload" style="width:100%; margin-top:8px;">Take a deload week (7 days at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%)</button>`}
       <label style="display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:13px;">
         <input type="checkbox" data-action="slToggleShortSessions" ${state.slShortSessions ? "checked" : ""} style="width:auto; margin-top:2px;">
-        <span><strong>Short sessions</strong> — squat and bench/press, then pull-ups and curls. Leaves ${STRONGLIFTS_SHORT_SKIP.slice(0, 2).join(" and ")} off A/B days (they stay in the routines).</span>
+        <span><strong>Short sessions</strong> — squat, bench or press, deadlift on B, then pull-ups and curls. Leaves rows off (pull-ups cover them); they stay in the routine.</span>
       </label>
       <div class="meal-item-macro" style="margin-top:6px;">
         ${state.liftingOnly

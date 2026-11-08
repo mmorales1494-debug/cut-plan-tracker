@@ -22,7 +22,7 @@ eq(A.exercises.filter(e => e.scheme).map(e => e.name), ["Squat", "Bench Press", 
 eq(B.exercises.filter(e => e.scheme).map(e => e.name), ["Squat", "Overhead Press", "Deadlift"], "B lifts");
 eq(A.exercises.filter(e => e.accessory).map(e => e.name), ["Pull-Up", "Bicep Curl (Dumbbell)"], "A accessories");
 eq(B.exercises.filter(e => e.accessory).map(e => e.name), ["Bench Press (light)", "Pull-Up", "Bicep Curl (Dumbbell)"], "B accessories");
-eq(B.exercises[2].scheme, { sets: 1, reps: 5 }, "deadlift is 1x5");
+eq(B.exercises[2].scheme, { sets: 3, reps: 5 }, "deadlift is 3x5");
 eq(A.exercises[0].scheme, { sets: 5, reps: 5 }, "squat is 5x5");
 eq(ctx.isStrongLifts(A), true, "A is a program routine");
 
@@ -45,7 +45,7 @@ let p = ctx.slPrescription(squat, "2026-01-01");
 eq(p.status, "start", "squat starts");
 near(ctx.toDisplayWeight(p.weightKg), 45, "squat starts at the empty bar");
 near(ctx.toDisplayWeight(ctx.slPrescription(row, "2026-01-01").weightKg), 65, "row starts at 65 lb");
-near(ctx.toDisplayWeight(ctx.slPrescription(dl, "2026-01-01").weightKg), 95, "deadlift starts at 95 lb");
+near(ctx.toDisplayWeight(ctx.slPrescription(dl, "2026-01-01").weightKg), 135, "deadlift starts at 135 lb (45s on the bar)");
 
 // ---- clean session adds weight ----
 logSession("2026-01-05", { Squat: fives(185) });
@@ -82,18 +82,19 @@ logSession("2026-01-15", { Squat: fives(175, [5, 5, 5, 5, 4]) });
 p = ctx.slPrescription(squat, "2026-01-17");
 eq(p.failStreak, 1, "first miss at a new weight counts as one, not four");
 
-// ---- deadlift: 1x5, +10 ----
+// ---- deadlift: 3x5, +10 ----
+const dlSets = (w, reps) => reps.map(r => ({ weight: ctx.toStorageWeight(w), reps: r }));
 S.days["2026-02-01"] = { workout: { type: "resistance", routineId: B.id, exercises: [
-  { name: "Deadlift", barbell: true, sets: [{ weight: ctx.toStorageWeight(225), reps: 5 }] },
+  { name: "Deadlift", barbell: true, sets: dlSets(225, [5, 5, 5]) },
 ] } };
 p = ctx.slPrescription(dl, "2026-02-02");
-eq(p.status, "up", "one set of 5 completes the deadlift");
+eq(p.status, "up", "three sets of 5 complete the deadlift");
 near(ctx.toDisplayWeight(p.weightKg), 235, "deadlift climbs 10 lb");
 S.days["2026-02-03"] = { workout: { type: "resistance", routineId: B.id, exercises: [
-  { name: "Deadlift", barbell: true, sets: [{ weight: ctx.toStorageWeight(235), reps: 4 }] },
+  { name: "Deadlift", barbell: true, sets: dlSets(235, [5, 5, 4]) },
 ] } };
 p = ctx.slPrescription(dl, "2026-02-04");
-eq(p.status, "repeat", "4 reps is a miss on 1x5");
+eq(p.status, "repeat", "4 reps on the last set is a miss on 3x5");
 
 // ---- warm-up rows typed into a set row don't read as missed work sets ----
 S.days["2026-03-01"] = { workout: { type: "resistance", routineId: A.id, exercises: [
@@ -113,6 +114,11 @@ eq(ctx.slWarmupSets(ctx.toStorageWeight(225), squat).map(r => `${r.weight}x${r.r
 eq(ctx.slWarmupSets(ctx.toStorageWeight(45), squat), [], "no ramp for an empty-bar work weight");
 eq(ctx.slWarmupSets(ctx.toStorageWeight(315), dl).map(r => `${r.weight}x${r.reps}`),
    ["160x5", "220x3", "285x2"], "deadlift ramp skips the empty-bar sets");
+eq(ctx.slWarmupSets(ctx.toStorageWeight(135), dl), [], "no deadlift warm-up below 135 (bar too low)");
+eq(ctx.slWarmupSets(ctx.toStorageWeight(175), dl).map(r => `${r.weight}x${r.reps}`),
+   ["160x2"], "175: only ramp sets at pulling height");
+eq(ctx.slWarmupSets(ctx.toStorageWeight(145), dl).map(r => `${r.weight}x${r.reps}`),
+   ["135x5"], "145: one set at 135");
 
 // ---- rest length follows the set ----
 eq(ctx.slRestSeconds(5, 5), 180, "clean set -> 3 min");
@@ -165,7 +171,7 @@ const legacy = {
 ctx.localStorage.setItem("cutPlanState", JSON.stringify(legacy));
 const migrated = ctx.loadState();
 eq(migrated.routines.map(r => r.program), ["stronglifts", "stronglifts"], "legacy routines pick up the program");
-eq(migrated.routines[1].exercises[2].scheme, { sets: 1, reps: 5 }, "legacy 5x5 deadlift becomes 1x5");
+eq(migrated.routines[1].exercises[2].scheme, { sets: 3, reps: 5 }, "legacy 5x5 deadlift becomes 3x5");
 eq(migrated.routines[0].exercises.some(e => e.name === "Band External Rotation"), false,
    "accessory auto-add leaves StrongLifts routines alone");
 eq(migrated.routines[0].restSeconds, 180, "rest defaults to the program's clean-set rest");

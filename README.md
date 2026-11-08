@@ -44,7 +44,7 @@ B/A/B the next, with a rest day between each. Three sessions, not three workouts
 |---|---|---|
 | | Squat 5x5 | Squat 5x5 |
 | | Bench Press 5x5 | Overhead Press 5x5 |
-| | Barbell Row 5x5 | Deadlift 1x5 |
+| | Barbell Row 5x5 | Deadlift 3x5 |
 
 What the app does for you once it's running:
 
@@ -75,8 +75,9 @@ until you start logging reps again.
   skipped day doesn't throw off the rotation. Tap Workout A / Workout B at the top of the day to
   override it. A program lift swapped onto the other day (bench on a B day) still runs as the
   program.
-- **Short sessions** (on by default, toggle on the StrongLifts card): squat and bench or press,
-  then pull-ups and curls. Rows and deadlifts stay in the routines, just off the day.
+- **Short sessions** (on by default, toggle on the StrongLifts card): squat, bench or press,
+  deadlift 3x5 on B days (starting at 135, +10 lb a clean session), then pull-ups and curls.
+  Rows stay in the routine, just off the day — pull-ups cover them.
 - **Accessories open pre-filled.** Pull-ups and curls come up at what you did last time, with
   a ✓ to log each set in one tap. B days also offer an optional light bench (2x8 at 80% of your
   bench) that doesn't count toward progression.

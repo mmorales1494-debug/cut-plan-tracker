@@ -36,7 +36,7 @@ eq(B.exercises.map(e => e.name), ["Squat", "Overhead Press", "Deadlift", "Bench 
 eq([A.slLetter, B.slLetter], ["A", "B"], "letters recorded");
 eq(A.exercises[0].barbell, true, "program lifts get the plate calculator");
 eq(S.slShortSessions, true, "short sessions on by default");
-eq(S.slLayoutVersion, 2, "layout version stamped");
+eq(S.slLayoutVersion, 3, "layout version stamped");
 eq(S.platePairs.lb[45], 1, "default plate inventory");
 ctx.localStorage.setItem("cutPlanState", JSON.stringify(S));
 eq(ctx.loadState().routines[2].exercises.length, 7, "migration is idempotent");
@@ -73,7 +73,9 @@ logAll(d1);
 const d2 = ctx.addDays(today, -8);
 newLiftDay(d2);
 eq(day(d2).workout.routineId, B.id, "after a logged A comes B");
-eq(names(d2), ["Squat", "Overhead Press", "Bench Press (light)", "Pull-Up", "Bicep Curl (Dumbbell)"], "short B");
+eq(names(d2), ["Squat", "Overhead Press", "Deadlift", "Bench Press (light)", "Pull-Up", "Bicep Curl (Dumbbell)"], "short B keeps the deadlift");
+const dlRows = day(d2).workout.exercises.find(e => e.name === "Deadlift").sets;
+eq([dlRows.length, show(dlRows[0].weight)], [3, 135], "deadlift opens at 3x135");
 // d2 is skipped (nothing logged) — the next day should still be B, not A
 const d3 = ctx.addDays(today, -6);
 newLiftDay(d3);
@@ -178,6 +180,20 @@ eq(day(today).workout.type, null, "today's untouched run cleared");
 eq(day(past).workout.type, "run", "past days untouched");
 S.liftingOnly = false;
 eq(ctx.suggestedWorkoutType("2026-11-03", null), "run", "switching it off brings the schedule back");
+
+// ---- v3: an already-migrated 1x5/95 deadlift becomes 3x5/135; a customized one is left alone ----
+const v2 = JSON.parse(JSON.stringify(legacy));
+v2.slLayoutVersion = 2;
+v2.routines[2] = Object.assign(ctx.strongLiftsRoutine("B"), { id: "routine_sl_b_1" });
+const v2dl = v2.routines[2].exercises.find(e => e.name === "Deadlift");
+v2dl.scheme = { sets: 1, reps: 5 }; v2dl.start = { lb: 95, kg: 40 };
+ctx.localStorage.setItem("cutPlanState", JSON.stringify(v2));
+let m = ctx.loadState().routines[2].exercises.find(e => e.name === "Deadlift");
+eq([m.scheme, m.start.lb], [{ sets: 3, reps: 5 }, 135], "v2 deadlift upgraded");
+v2dl.scheme = { sets: 2, reps: 3 }; v2dl.start = { lb: 155, kg: 70 };
+ctx.localStorage.setItem("cutPlanState", JSON.stringify(v2));
+m = ctx.loadState().routines[2].exercises.find(e => e.name === "Deadlift");
+eq([m.scheme, m.start.lb], [{ sets: 2, reps: 3 }, 155], "a deadlift you set yourself is kept");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
