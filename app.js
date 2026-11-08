@@ -1702,93 +1702,68 @@ function accessoryConfigFor(routine, ex) {
   return slAccessoryConfig(routine, ex.name);
 }
 
-// Sets per muscle group over the last two weeks through dateKey (today's logged sets
-// included): a primary muscle counts each set once, a secondary one half. Core work logged on
-// run days counts too.
-function recentMuscleVolume(dateKey) {
-  const from = addDays(dateKey, -(EXTRA_LOOKBACK_DAYS - 1));
-  const vol = {};
-  const add = (name, sets) => {
-    const m = MUSCLE_MAP[name];
-    if (!m || !sets) return;
-    m.p.forEach(t => { vol[t] = (vol[t] || 0) + sets; });
-    m.s.forEach(t => { vol[t] = (vol[t] || 0) + sets / 2; });
-  };
-  for (const [key, d] of Object.entries(state.days)) {
-    if (key < from || key > dateKey || !d.workout) continue;
-    if (d.workout.type === "resistance") d.workout.exercises.forEach(ex => add(ex.name, loggedSets(ex).length));
-    (d.workout.core || []).forEach(ex => {
-      const n = (ex.sets || []).filter(st => Object.values(st).some(v => v !== "" && v != null)).length;
-      vol.core = (vol.core || 0) + n;
-    });
-  }
-  return vol;
-}
-
 function ownsEquipment(id) {
   const eq = state.equipment || DEFAULT_EQUIPMENT;
   return !!eq[id];
 }
 
-// Ranked add-ons for the day: the muscle groups furthest below their two-week target first,
-// one suggestion per group, only with equipment you own and not already on the day. Within a
-// group, the one you did least recently comes first, so they rotate.
-// Every muscle group that's below target, each with the one add-on to do for it: of the
-// options you own that aren't already on the day, the one done least recently (never-done
-// first), so a group's options rotate session to session.
-function extraCandidatesByGroup(day, dateKey) {
-  const vol = recentMuscleVolume(dateKey);
+// The finishers to suggest for a day, in the plan's order: for each slot, the option you own
+// and did least recently (never-done ones in plan order). A slot already covered — one of its
+// options is on the day — comes back marked done instead of suggesting a second one.
+function extraPlanFor(day) {
+  const routine = routineForDay(day);
+  return EXTRA_PLAN[isStrongLifts(routine) && routine.slLetter] || EXTRA_PLAN.default;
+}
+
+function extraSuggestions(day, dateKey) {
   const onDay = new Set(day.workout.exercises.map(e => e.name));
   const lastDone = name => {
     const last = lastSessionFor(name, addDays(dateKey, 1));
     return last ? last.dateKey : "";
   };
-  const groups = [];
-  EXTRA_EXERCISES.forEach((x, priority) => {
-    if (!ownsEquipment(x.needs) || onDay.has(x.name)) return;
-    const group = MUSCLE_MAP[x.name].p[0];
-    const target = EXTRA_VOLUME_TARGETS[group] || 10;
-    const done = vol[group] || 0;
-    if (done >= target) return;
-    const pick = { ...x, group, target, done: Math.round(done), need: (target - done) / target, priority, lastDone: lastDone(x.name) };
-    const existing = groups.find(g => g.group === group);
-    if (!existing) groups.push(pick);
-    else if (pick.lastDone < existing.lastDone) groups[groups.indexOf(existing)] = { ...pick, priority: existing.priority };
-  });
-  return groups;
-}
-
-// Ranked add-ons for the day: the groups furthest below their two-week target first (ties go
-// to catalog order), one suggestion per group.
-function extraSuggestions(day, dateKey) {
-  return extraCandidatesByGroup(day, dateKey)
-    .sort((a, b) => b.need - a.need || a.priority - b.priority)
-    .slice(0, EXTRA_SUGGESTION_COUNT);
+  const picks = [];
+  for (const slot of extraPlanFor(day)) {
+    const covered = slot.options.find(n => onDay.has(n));
+    if (covered) { picks.push({ ...slot, name: covered, done: true }); continue; }
+    const owned = slot.options
+      .map(n => EXTRA_EXERCISES.find(x => x.name === n))
+      .filter(x => x && ownsEquipment(x.needs));
+    if (!owned.length) continue;
+    const pick = owned.map((x, i) => ({ x, i, last: lastDone(x.name) }))
+      .sort((a, b) => a.last.localeCompare(b.last) || a.i - b.i)[0].x;
+    picks.push({ ...slot, ...pick, done: false });
+  }
+  return picks;
 }
 
 function renderExtraPanel(day) {
   if (!extraPanelOpen) {
-    return `<button class="btn secondary extra-toggle" data-action="toggleExtraPanel" style="width:100%; margin-top:8px;">⏱ Have extra time? Suggest something</button>`;
+    return `<button class="btn secondary extra-toggle" data-action="toggleExtraPanel" style="width:100%; margin-top:8px;">⏱ Have extra time? Finish the session</button>`;
   }
   const picks = extraSuggestions(day, viewDate);
+  const open = picks.filter(p => !p.done);
+  const minutes = open.reduce((sum, p) => sum + p.minutes, 0);
   return `
     <div class="extra-panel">
-      <div class="row"><h3 style="margin:0;">Have extra time?</h3><button class="icon-btn" data-action="toggleExtraPanel" aria-label="Close">✕</button></div>
-      <div class="meal-item-macro" style="margin:4px 0 10px;">Picked from your last ${EXTRA_LOOKBACK_DAYS} days — whatever's furthest behind, using the equipment in Settings.</div>
-      ${picks.length ? picks.map(x => `
-        <div class="extra-pick">
+      <div class="row"><h3 style="margin:0;">Finish the session</h3><button class="icon-btn" data-action="toggleExtraPanel" aria-label="Close">✕</button></div>
+      <div class="meal-item-macro" style="margin:4px 0 10px;">What I'd add to today's workout, most important first — stop whenever you run out of time.</div>
+      ${picks.map((x, i) => `
+        <div class="extra-pick ${x.done ? "done" : ""}">
+          <div class="extra-num">${i + 1}</div>
           <div style="flex:1; min-width:0;">
-            <div class="meal-item-label">${x.name} <span class="recurring-tag">${x.sets}×${x.reps}${x.perSide ? "/side" : ""} · ~${x.minutes} min</span></div>
-            <div class="meal-item-macro">${EXTRA_REASONS[x.group] || ""} — ${x.done} set${x.done === 1 ? "" : "s"} in ${EXTRA_LOOKBACK_DAYS} days, aim ~${x.target}.</div>
+            <div class="meal-item-label">${x.name}${x.done ? "" : ` <span class="recurring-tag">${x.sets}×${x.reps}${x.perSide ? "/side" : ""} · ~${x.minutes} min</span>`}</div>
+            <div class="meal-item-macro"><strong>${x.label}:</strong> ${x.reason}</div>
           </div>
-          <button class="btn" data-action="addExtra" data-name="${x.name}">Add</button>
+          ${x.done ? `<span class="extra-added">Added ✓</span>` : `<button class="btn" data-action="addExtra" data-name="${x.name}">Add</button>`}
         </div>
-      `).join("") : `<div class="empty-state">Nothing's behind right now — you're covered. Go home early.</div>`}
+      `).join("")}
+      ${open.length > 1 ? `<button class="btn" data-action="addAllExtras" style="width:100%; margin-top:10px;">Add all ${open.length} (~${minutes} min)</button>` : ""}
+      ${!picks.length ? `<div class="empty-state">Nothing to suggest with the equipment in Settings.</div>` : ""}
     </div>
   `;
 }
 
-// A / B buttons on a program day. The app picks for you (the one after your last logged
+// A / B buttons on a program day.// A / B buttons on a program day. The app picks for you (the one after your last logged
 // session); tapping the other one pins this day to it.
 function renderStrongLiftsRoutinePicker(day, routine) {
   const slActive = routinePool().filter(isStrongLifts);
@@ -4078,10 +4053,12 @@ document.getElementById("view-root").addEventListener("click", e => {
     extraPanelOpen = !extraPanelOpen;
     render(); return;
   }
-  if (action === "addExtra") {
-    const cfg = extraConfig(el.dataset.name);
-    if (!cfg) return;
-    day.workout.exercises.push({ name: cfg.name, barbell: false, sets: slAccessoryRows(cfg, viewDate), extra: true });
+  if (action === "addExtra" || action === "addAllExtras") {
+    const names = action === "addExtra" ? [el.dataset.name] : extraSuggestions(day, viewDate).filter(p => !p.done).map(p => p.name);
+    for (const name of names) {
+      const cfg = extraConfig(name);
+      if (cfg) day.workout.exercises.push({ name, barbell: false, sets: slAccessoryRows(cfg, viewDate), extra: true });
+    }
     day.workout.routinePinned = true;
     saveState(); render(); return;
   }

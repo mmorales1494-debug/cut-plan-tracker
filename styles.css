@@ -876,3 +876,13 @@ table.hist-table th { color: var(--text); font-weight: 600; }
   border-top: 1px solid var(--border);
 }
 .extra-pick .btn { flex-shrink: 0; min-width: 64px; }
+.extra-num {
+  width: 22px; height: 22px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--text);
+  font-size: 12px; font-weight: 700;
+}
+.extra-pick.done .meal-item-label { color: var(--text-dim); }
+.extra-added { font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
