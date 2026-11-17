@@ -36,7 +36,7 @@ eq(B.exercises.map(e => e.name), ["Squat", "Overhead Press", "Deadlift", "Bench 
 eq([A.slLetter, B.slLetter], ["A", "B"], "letters recorded");
 eq(A.exercises[0].barbell, true, "program lifts get the plate calculator");
 eq(S.slShortSessions, true, "short sessions on by default");
-eq(S.slLayoutVersion, 3, "layout version stamped");
+eq(S.slLayoutVersion, 4, "layout version stamped");
 eq(S.platePairs.lb[45], 1, "default plate inventory");
 ctx.localStorage.setItem("cutPlanState", JSON.stringify(S));
 eq(ctx.loadState().routines[2].exercises.length, 7, "migration is idempotent");

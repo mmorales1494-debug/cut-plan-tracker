@@ -170,7 +170,7 @@ const legacy = {
 };
 ctx.localStorage.setItem("cutPlanState", JSON.stringify(legacy));
 const migrated = ctx.loadState();
-eq(migrated.routines.map(r => r.program), ["stronglifts", "stronglifts"], "legacy routines pick up the program");
+eq(migrated.routines.filter(r => !r.accessoryDay).map(r => r.program), ["stronglifts", "stronglifts"], "legacy routines pick up the program");
 eq(migrated.routines[1].exercises[2].scheme, { sets: 3, reps: 5 }, "legacy 5x5 deadlift becomes 3x5");
 eq(migrated.routines[0].exercises.some(e => e.name === "Band External Rotation"), false,
    "accessory auto-add leaves StrongLifts routines alone");

@@ -92,6 +92,13 @@ for grip. Options you did most recently rotate out, only gear checked in **Setti
 Equipment** is used, and "Add all" adds the lot. Added ones open pre-filled from last time
 with one-tap logging, and never affect the program's progression.
 
+**Accessory Day** is an optional third day on top of A/B — pick **Accessory** at the top of
+any lifting day. One-arm dumbbell rows, Bulgarian split squats, back extensions (in the rack:
+heels under the safeties, pad just below the hip bones), Nordic hamstring curls, farmer carries
+(logged in seconds) and optional hanging leg raises, each with a how-to cue. Short on time: the
+row, back extensions and carries. It never joins the A/B rotation or touches the program's
+weights; sets and reps are editable in **Workout routines**. Best not the day before a B day.
+
 Sets, reps and the jump per session are editable per lift in **Workout routines**, and any
 extra exercise you add to an A or B day is treated as a normal accessory, outside the
 program.

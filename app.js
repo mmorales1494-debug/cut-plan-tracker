@@ -46,6 +46,24 @@ function strongLiftsRoutine(letter) {
   };
 }
 
+function accessoryDayRoutine() {
+  return {
+    id: "routine_accessory_" + Date.now(),
+    name: ACCESSORY_DAY_NAME,
+    accessoryDay: true,
+    active: true,
+    exercises: JSON.parse(JSON.stringify(ACCESSORY_DAY_TEMPLATE)),
+    setTarget: { min: 3, max: 3 },
+    repTarget: { min: 8, max: 12 },
+    weightStepKg: WEIGHT_STEP_KG,
+    restSeconds: ACCESSORY_REST_SECONDS,
+  };
+}
+
+function isAccessoryDay(routine) {
+  return !!routine && !!routine.accessoryDay;
+}
+
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
@@ -107,6 +125,13 @@ function loadState() {
         });
         parsed.slLayoutVersion = 3;
       }
+      // Layout v4: an Accessory Day alongside A/B for anyone running the program.
+      if (parsed.slLayoutVersion < 4) {
+        if (parsed.routines.some(r => r.program === STRONGLIFTS_PROGRAM) && !parsed.routines.some(r => r.accessoryDay)) {
+          parsed.routines.push(accessoryDayRoutine());
+        }
+        parsed.slLayoutVersion = 4;
+      }
       if (parsed.slShortSessions === undefined) parsed.slShortSessions = true;
       if (!parsed.restTimes) parsed.restTimes = { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS };
       if (parsed.liftingOnly === undefined) parsed.liftingOnly = false;
@@ -114,9 +139,9 @@ function loadState() {
       if (!parsed.equipment) parsed.equipment = { ...DEFAULT_EQUIPMENT };
       // one-time addition: rotator cuff work wasn't in any routine before — add it if missing
       // (still just a normal exercise afterward, remove it in Workout Routines if not wanted).
-      // StrongLifts routines are left alone — the program is the five lifts, nothing else.
+      // StrongLifts routines and Accessory Day are left alone — they carry their own lists.
       parsed.routines.forEach(r => {
-        if (r.program === STRONGLIFTS_PROGRAM) return;
+        if (r.program === STRONGLIFTS_PROGRAM || r.accessoryDay) return;
         if (!r.exercises.some(ex => ex.name === "Band External Rotation")) {
           r.exercises.push({ name: "Band External Rotation", barbell: false });
         }
@@ -203,7 +228,7 @@ function loadState() {
     weightUnit: "kg",
     routines: [defaultRoutine()],
     nextRoutineIndex: 0,
-    slLayoutVersion: 3,
+    slLayoutVersion: 4,
     slShortSessions: true,
     restTimes: { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS },
     liftingOnly: false,
@@ -289,9 +314,12 @@ function routineForDay(day) {
     { name: "", setTarget: SET_TARGET, repTarget: REP_TARGET, weightStepKg: WEIGHT_STEP_KG };
 }
 
+// The routines the lifting rotation cycles through. Accessory Day is never one of them — it's
+// picked by hand, so doing it doesn't move A/B along.
 function routinePool() {
-  const active = state.routines.filter(r => r.active);
-  return active.length ? active : state.routines;
+  const lifting = state.routines.filter(r => !isAccessoryDay(r));
+  const active = lifting.filter(r => r.active);
+  return active.length ? active : lifting;
 }
 
 // A set only counts once it has reps in it. Rows the app pre-fills (a prescribed weight, last
@@ -1355,7 +1383,7 @@ function slResyncPrescribedSets(day, dateKey) {
 
 // The routine's accessory entry for an exercise (pull-ups, curls, the light bench), or null.
 function slAccessoryConfig(routine, exName) {
-  if (!isStrongLifts(routine)) return null;
+  if (!isStrongLifts(routine) && !isAccessoryDay(routine)) return null;
   return routine.exercises.find(e => e.name === exName && e.accessory) || null;
 }
 
@@ -1391,7 +1419,7 @@ function slAccessoryRows(cfg, dateKey) {
 
 function slFillAccessorySets(day, dateKey) {
   const routine = routineForDay(day);
-  if (!isStrongLifts(routine)) return;
+  if (!isStrongLifts(routine) && !isAccessoryDay(routine)) return;
   for (const ex of day.workout.exercises) {
     if (ex.sets.length || ex.quickAdd) continue;
     const cfg = slAccessoryConfig(routine, ex.name);
@@ -1656,7 +1684,7 @@ function renderAccessoryBlock(ex, exIdx, cfg) {
   const last = lastSessionFor(ex.name, viewDate);
   const sub = cfg.backoff
     ? `${Math.round(cfg.backoff.pct * 100)}% of your ${cfg.backoff.of} work weight — extra practice, doesn't count toward progression.`
-    : last ? `Last: ${acc.bodyweight && !last.weight ? "bodyweight" : formatKgLb(last.weight)} × ${last.reps}${cfg.perSide ? " each side" : ""} (${niceDate(last.dateKey)}) — filled in below.` : `Target ${acc.sets}×${acc.reps}${cfg.perSide ? " each side" : ""} — pick a weight you can do with a couple of reps to spare.`;
+    : last ? `Last: ${acc.bodyweight && !last.weight ? "bodyweight" : formatKgLb(last.weight)} × ${last.reps}${acc.unit === "sec" ? "s" : ""}${cfg.perSide ? " each side" : ""} (${niceDate(last.dateKey)}) — filled in below.` : `Target ${acc.sets}×${acc.reps}${acc.unit === "sec" ? "s" : ""}${cfg.perSide ? " each side" : ""} — ${acc.bodyweight ? "bodyweight to start" : acc.unit === "sec" ? "pick a weight you can hold the whole time" : "pick a weight you can do with a couple of reps to spare"}.`;
   return `
     <div class="exercise-block">
       <div class="row">
@@ -1666,6 +1694,7 @@ function renderAccessoryBlock(ex, exIdx, cfg) {
           ${cfg.extra ? `<button class="icon-btn" data-action="removeExtra" data-ex="${exIdx}" aria-label="Remove">✕</button>` : ""}
         </div>
       </div>
+      ${cfg.cue ? `<div class="meal-item-macro acc-cue">${cfg.cue}</div>` : ""}
       <div class="meal-item-macro" style="margin:6px 0 8px;">${sub}${cfg.optional ? " Skip it when you're short on time." : ""}</div>
       ${ex.sets.map((s, sIdx) => {
         const reps = Number(s.reps) || 0;
@@ -1674,8 +1703,8 @@ function renderAccessoryBlock(ex, exIdx, cfg) {
         <div class="set-row-flex">
           <div class="set-num">${sIdx + 1}</div>
           <input type="number" inputmode="decimal" placeholder="${acc.bodyweight ? "BW" : state.weightUnit}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="weight" value="${toDisplayWeight(s.weight)}">
-          <input type="number" inputmode="numeric" placeholder="${target}${cfg.perSide ? "/side" : " reps"}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
-          <button class="btn ${reps ? "" : "secondary"}" data-action="accLogSet" data-ex="${exIdx}" data-set="${sIdx}" style="min-width:58px; padding:8px 10px;">✓ ${reps || target}</button>
+          <input type="number" inputmode="numeric" placeholder="${target}${acc.unit === "sec" ? " sec" : cfg.perSide ? "/side" : " reps"}" data-action="setField" data-ex="${exIdx}" data-set="${sIdx}" data-field="reps" value="${s.reps ?? ""}">
+          <button class="btn ${reps ? "" : "secondary"}" data-action="accLogSet" data-ex="${exIdx}" data-set="${sIdx}" style="min-width:58px; padding:8px 10px;">✓ ${reps || target}${acc.unit === "sec" ? "s" : ""}</button>
           <button class="remove-set" data-action="removeSet" data-ex="${exIdx}" data-set="${sIdx}">✕</button>
         </div>
         ${ex.barbell && s.weight ? `<div data-plate-for="${exIdx}-${sIdx}">${renderPlateCalc(s.weight)}</div>` : ""}`;
@@ -1763,14 +1792,15 @@ function renderExtraPanel(day) {
   `;
 }
 
-// A / B buttons on a program day.// A / B buttons on a program day. The app picks for you (the one after your last logged
-// session); tapping the other one pins this day to it.
+// Workout A / Workout B / Accessory buttons on a lifting day. The app picks A or B for you (the
+// one after your last logged session); tapping another pins this day to it.
 function renderStrongLiftsRoutinePicker(day, routine) {
-  const slActive = routinePool().filter(isStrongLifts);
-  if (slActive.length < 2) return "";
+  const choices = routinePool().filter(isStrongLifts).concat(state.routines.filter(r => isAccessoryDay(r) && r.active));
+  if (choices.length < 2) return "";
+  const label = r => isAccessoryDay(r) ? "Accessory" : r.name.replace("StrongLifts ", "Workout ");
   return `
     <div class="row" style="gap:6px; margin-bottom:10px;">
-      ${slActive.map(r => `<button class="btn ${r.id === routine.id ? "" : "secondary"}" data-action="slPickRoutine" data-routine="${r.id}" style="flex:1; padding:8px;">${r.name.replace("StrongLifts ", "Workout ")}</button>`).join("")}
+      ${choices.map(r => `<button class="btn ${r.id === routine.id ? "" : "secondary"}" data-action="slPickRoutine" data-routine="${r.id}" style="flex:1; padding:8px;">${label(r)}</button>`).join("")}
     </div>
   `;
 }
@@ -1779,7 +1809,9 @@ function renderWorkoutBody(day) {
   const w = day.workout;
   if (w.type === "resistance") {
     const routine = routineForDay(day);
-    const routineHeader = isStrongLifts(routine)
+    const routineHeader = isAccessoryDay(routine)
+      ? renderStrongLiftsRoutinePicker(day, routine) + `<div class="meal-item-macro" style="margin-bottom:10px;"><strong>${routine.name}</strong> — on top of A/B; doesn't change the rotation or your main lifts. Short on time? Just the row, back extensions and carries (~15 min). Best not the day before a B day — it tires the back and hamstrings you deadlift with.</div>`
+      : isStrongLifts(routine)
       ? renderStrongLiftsRoutinePicker(day, routine) + `<div class="meal-item-macro" style="margin-bottom:10px;"><strong>${routine.name}</strong> — every work set is the same weight; tap ✓ as you finish each set.${deloadWeekFor(viewDate) ? ` <strong>Deload week</strong> — everything's at ${Math.round(DELOAD_WEEK_FACTOR * 100)}%, take it easy.` : ""}</div>`
       : routine.name ? `<div class="meal-item-macro" style="margin-bottom:10px;">Routine: <strong>${routine.name}</strong></div>` : "";
     return renderWorkoutTimerControl(day) + routineHeader + w.exercises.map((ex, exIdx) => {
@@ -2068,6 +2100,11 @@ function renderRoutineManager() {
               <div class="field" style="margin:0; flex:1;"><label style="font-size:10px;">Reps</label><input type="number" inputmode="numeric" data-action="setSlExerciseField" data-routine="${routine.id}" data-idx="${idx}" data-field="reps" value="${ex.scheme.reps}" style="padding:6px;"></div>
               <div class="field" style="margin:0; flex:1;"><label style="font-size:10px;">+ per session (${state.weightUnit})</label><input type="number" inputmode="decimal" step="${slRoundStep()}" data-action="setSlExerciseField" data-routine="${routine.id}" data-idx="${idx}" data-field="increment" value="${slIncrementDisplay(ex)}" style="padding:6px;"></div>
             </div>
+          ` : ex.accessory ? `
+            <div style="display:flex; gap:6px; align-items:flex-end; margin-top:4px;">
+              <div class="field" style="margin:0; flex:1;"><label style="font-size:10px;">Sets</label><input type="number" inputmode="numeric" data-action="setAccExerciseField" data-routine="${routine.id}" data-idx="${idx}" data-field="sets" value="${ex.accessory.sets}" style="padding:6px;"></div>
+              <div class="field" style="margin:0; flex:1;"><label style="font-size:10px;">${ex.accessory.unit === "sec" ? "Seconds" : "Reps"}${ex.perSide ? " / side" : ""}</label><input type="number" inputmode="numeric" data-action="setAccExerciseField" data-routine="${routine.id}" data-idx="${idx}" data-field="reps" value="${ex.accessory.reps}" style="padding:6px;"></div>
+            </div>
           ` : `
           <label style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-dim); margin-top:2px;">
             <input type="checkbox" data-action="toggleRoutineExerciseBarbell" data-routine="${routine.id}" data-idx="${idx}" ${ex.barbell ? "checked" : ""} style="width:auto;"> Barbell (plate calculator)
@@ -2089,7 +2126,9 @@ function renderRoutineManager() {
           <button class="btn ${routine.active ? "" : "secondary"}" data-action="toggleRoutineActive" data-routine="${routine.id}">${routine.active ? "Active ✓" : "Inactive"}</button>
         </div>
         <div class="field" style="margin-top:10px;"><label>Routine name</label><input type="text" data-action="setRoutineField" data-routine="${routine.id}" data-field="name" value="${routine.name}"></div>
-        ${isStrongLifts(routine) ? `
+        ${isAccessoryDay(routine) ? `
+          <div class="meal-item-macro" style="margin-bottom:10px;">Optional day on top of A/B — pick <strong>Accessory</strong> at the top of a lifting day. Not part of the A/B rotation. Each exercise opens at what you did last time; the sets and reps below are where it starts. Inactive hides the button.</div>
+        ` : isStrongLifts(routine) ? `
           <div class="meal-item-macro" style="margin-bottom:10px;">Sets, reps and the jump per session are set per lift below. Rest is automatic: ${formatRest(restTimes().clean)} after a clean set, ${formatRest(restTimes().grind)} one rep short, ${formatRest(restTimes().missed)} after a miss (change these in Settings → Lifting).</div>
         ` : `
         <div class="two-col">
@@ -3957,6 +3996,7 @@ document.getElementById("view-root").addEventListener("click", e => {
     if (!confirm("Add StrongLifts A and B and make them your active routines?\n\nYour other routines stay saved but stop coming up on resistance days — flip them back to Active any time.")) return;
     state.routines.forEach(r => { r.active = false; });
     state.routines.push(strongLiftsRoutine("A"), strongLiftsRoutine("B"));
+    if (!state.routines.some(isAccessoryDay)) state.routines.push(accessoryDayRoutine());
     // Start the rotation on A, wherever the old routines happened to leave the index.
     state.nextRoutineIndex = 0;
     saveState(); render(); return;
@@ -3967,7 +4007,7 @@ document.getElementById("view-root").addEventListener("click", e => {
   }
   if (action === "toggleRoutineActive") {
     const routine = state.routines.find(r => r.id === el.dataset.routine);
-    if (routine.active && state.routines.filter(r => r.active).length <= 1) return;
+    if (routine.active && !isAccessoryDay(routine) && routinePool().filter(r => r.active).length <= 1) return;
     routine.active = !routine.active;
     saveState(); render(); return;
   }
@@ -3983,7 +4023,11 @@ document.getElementById("view-root").addEventListener("click", e => {
     const barbellBox = document.getElementById("new-exercise-barbell-" + el.dataset.routine);
     const name = input.value.trim();
     if (!name) return;
-    routine.exercises.push({ name, barbell: !!(barbellBox && barbellBox.checked) });
+    const entry = { name, barbell: !!(barbellBox && barbellBox.checked) };
+    // On a program or accessory day, a new exercise behaves like the other accessories:
+    // pre-filled from last time, one tap per set, outside the program's progression.
+    if (isStrongLifts(routine) || isAccessoryDay(routine)) entry.accessory = { sets: 3, reps: 10 };
+    routine.exercises.push(entry);
     saveState(); render(); return;
   }
   if (action === "removeRoutineExercise") {
@@ -4481,6 +4525,15 @@ document.getElementById("view-root").addEventListener("input", e => {
     else if (field === "repMax") routine.repTarget.max = Number(el.value) || 0;
     else if (field === "weightStep") routine.weightStepKg = toStorageWeight(el.value) || 0;
     else if (field === "restSeconds") routine.restSeconds = Number(el.value) || 0;
+    saveState();
+    return;
+  }
+  if (action === "setAccExerciseField") {
+    const routine = state.routines.find(r => r.id === el.dataset.routine);
+    const ex = routine && routine.exercises[Number(el.dataset.idx)];
+    if (!ex || !ex.accessory) return;
+    const value = Math.max(1, Math.floor(Number(el.value) || 0));
+    if (el.value !== "") ex.accessory[el.dataset.field] = value;
     saveState();
     return;
   }

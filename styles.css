@@ -886,3 +886,10 @@ table.hist-table th { color: var(--text); font-weight: 600; }
 }
 .extra-pick.done .meal-item-label { color: var(--text-dim); }
 .extra-added { font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
+.acc-cue {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--accent-dim);
+  background: var(--surface-2);
+  border-radius: 4px;
+}

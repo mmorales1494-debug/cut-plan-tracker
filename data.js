@@ -283,6 +283,29 @@ const EXTRA_PLAN = {
   ],
 };
 
+// ---------- Accessory Day ----------
+
+// An optional day on top of A/B: rows, the posterior chain, single-leg work and carries — what
+// the main lifts leave out. It never joins the A/B rotation (pick it on the day) and never
+// touches the program's weights. Each exercise opens at what you did last time; sets x reps
+// here are only the starting point. perSide shows "each side"; unit "sec" logs seconds instead
+// of reps (carries); cue is the one-line how-to shown on the exercise.
+const ACCESSORY_DAY_NAME = "Accessory Day";
+const ACCESSORY_DAY_TEMPLATE = [
+  { name: "One-Arm Dumbbell Row", barbell: false, perSide: true, accessory: { sets: 3, reps: 10 },
+    cue: "Hand and knee on the bench, flat back — pull the dumbbell to your hip." },
+  { name: "Bulgarian Split Squat", barbell: false, perSide: true, accessory: { sets: 3, reps: 8 },
+    cue: "Back foot on the bench, dumbbells at your sides; front knee tracks over your toes." },
+  { name: "Back Extension", barbell: false, accessory: { sets: 3, reps: 12, bodyweight: true },
+    cue: "Heels locked under the safeties, pad just below your hip bones. Stop at a straight line — no arching past it. Hold a plate once 15 is easy." },
+  { name: "Nordic Hamstring Curl", barbell: false, accessory: { sets: 3, reps: 4, bodyweight: true },
+    cue: "Kneel with heels under the safeties. Lower as slowly as you can, catch yourself with your hands, push back up." },
+  { name: "Farmer Carry", barbell: false, accessory: { sets: 3, reps: 40, unit: "sec" },
+    cue: "Heaviest dumbbells you can hold the whole time — tall, short steps. Weight is per hand." },
+  { name: "Hanging Leg Raise", barbell: false, optional: true, accessory: { sets: 3, reps: 10, bodyweight: true },
+    cue: "Knees bent or legs straight — no swinging." },
+];
+
 // "Short sessions" leaves these out of A/B days — squat, one press, deadlift on B, then
 // pull-ups and curls. Rows are covered by the pull-ups. They stay in the routine, one toggle away.
 const STRONGLIFTS_SHORT_SKIP = ["Barbell Row", "Band External Rotation"];
