@@ -14,12 +14,24 @@ ctx.state = ctx.loadState();
 const S = ctx.state;
 const acc = S.routines.find(r => r.accessoryDay);
 eq(!!acc, true, "program users get an Accessory Day");
-eq(acc.exercises.map(e => e.name), ["One-Arm Dumbbell Row", "Bulgarian Split Squat", "Back Extension", "Nordic Hamstring Curl", "Farmer Carry", "Hanging Leg Raise"], "template order");
-eq(S.slLayoutVersion, 4, "version stamped");
+eq(acc.exercises.map(e => e.name), ["One-Arm Dumbbell Row", "Bulgarian Split Squat", "Back Extension", "Sliding Leg Curl", "Farmer Carry", "Hanging Leg Raise"], "template order");
+eq(S.slLayoutVersion, 5, "version stamped");
 ctx.localStorage.setItem("cutPlanState", JSON.stringify(S));
 eq(ctx.loadState().routines.filter(r => r.accessoryDay).length, 1, "not added twice");
 ctx.localStorage.setItem("cutPlanState", JSON.stringify({ ...base, routines: [{ id: "routine_1", name: "Full Body", active: true, exercises: [] }] }));
 eq(ctx.loadState().routines.some(r => r.accessoryDay), false, "freeform-only users don't get one");
+
+// ---- v5: an Accessory Day from v4 swaps Nordics for sliding leg curls, in the same slot ----
+const v4 = JSON.parse(JSON.stringify(S));
+v4.slLayoutVersion = 4;
+const v4acc = v4.routines.find(r => r.accessoryDay);
+v4acc.exercises[3] = { name: "Nordic Hamstring Curl", barbell: false, accessory: { sets: 3, reps: 4, bodyweight: true } };
+v4acc.exercises[0].accessory.reps = 12; // an edit elsewhere survives
+ctx.localStorage.setItem("cutPlanState", JSON.stringify(v4));
+const v5acc = ctx.loadState().routines.find(r => r.accessoryDay);
+eq(v5acc.exercises.map(e => e.name)[3], "Sliding Leg Curl", "Nordic swapped in place");
+eq(v5acc.exercises.some(e => e.name === "Nordic Hamstring Curl"), false, "no Nordics left");
+eq(v5acc.exercises[0].accessory.reps, 12, "other edits kept");
 
 // ---- never in the rotation ----
 const [A, B] = S.routines.filter(r => r.program);

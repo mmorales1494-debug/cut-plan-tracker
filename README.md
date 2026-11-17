@@ -94,7 +94,7 @@ with one-tap logging, and never affect the program's progression.
 
 **Accessory Day** is an optional third day on top of A/B — pick **Accessory** at the top of
 any lifting day. One-arm dumbbell rows, Bulgarian split squats, back extensions (in the rack:
-heels under the safeties, pad just below the hip bones), Nordic hamstring curls, farmer carries
+heels under the safeties, pad just below the hip bones), sliding leg curls (towel on a smooth floor), farmer carries
 (logged in seconds) and optional hanging leg raises, each with a how-to cue. Short on time: the
 row, back extensions and carries. It never joins the A/B rotation or touches the program's
 weights; sets and reps are editable in **Workout routines**. Best not the day before a B day.

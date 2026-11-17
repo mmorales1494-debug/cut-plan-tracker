@@ -132,6 +132,17 @@ function loadState() {
         }
         parsed.slLayoutVersion = 4;
       }
+      // Layout v5: Nordic curls need somewhere to anchor your heels; sliding leg curls train
+      // the same knee-bend hamstring work with just a towel. Swapped in place, same slot.
+      if (parsed.slLayoutVersion < 5) {
+        const sliding = ACCESSORY_DAY_TEMPLATE.find(e => e.name === "Sliding Leg Curl");
+        parsed.routines.forEach(r => {
+          if (!r.accessoryDay) return;
+          const i = r.exercises.findIndex(e => e.name === "Nordic Hamstring Curl");
+          if (i !== -1 && !r.exercises.some(e => e.name === "Sliding Leg Curl")) r.exercises[i] = JSON.parse(JSON.stringify(sliding));
+        });
+        parsed.slLayoutVersion = 5;
+      }
       if (parsed.slShortSessions === undefined) parsed.slShortSessions = true;
       if (!parsed.restTimes) parsed.restTimes = { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS };
       if (parsed.liftingOnly === undefined) parsed.liftingOnly = false;
@@ -228,7 +239,7 @@ function loadState() {
     weightUnit: "kg",
     routines: [defaultRoutine()],
     nextRoutineIndex: 0,
-    slLayoutVersion: 4,
+    slLayoutVersion: 5,
     slShortSessions: true,
     restTimes: { ...STRONGLIFTS_REST, warmup: WARMUP_REST_SECONDS },
     liftingOnly: false,
